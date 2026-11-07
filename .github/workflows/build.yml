@@ -84,20 +84,22 @@ jobs:
           keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         fi
 
-    # 4. Auto-configure export_presets.cfg (arm64-v8a only for smaller size & keystore paths)
-    - name: Ensure arm64-only & SDK configuration
+    # 4. Configure Godot Android SDK & Export Settings (Arm64 only & Keystore paths)
+    - name: Configure Godot Android SDK & Export Settings
       run: |
+        export ANDROID_HOME=$HOME/android-sdk
+        mkdir -p ~/.local/share/godot/
+        
         python3 -c '
-        import configparser, os
-
+        import os, configparser
+        sdk_path = os.path.expanduser("~/android-sdk")
+        debug_keystore = os.path.expanduser("~/.android/debug.keystore")
+        
         config_path = "export_presets.cfg"
         if os.path.exists(config_path):
             config = configparser.ConfigParser()
             config.read(config_path)
             
-            keystore_path = os.path.expanduser("~/.android/debug.keystore")
-            android_sdk_path = os.path.expanduser("~/android-sdk")
-
             for section in config.sections():
                 if config.has_option(section, "platform") and config.get(section, "platform") == "Android":
                     config.set(section, "architectures/armv7", "false")
@@ -105,24 +107,25 @@ jobs:
                     config.set(section, "architectures/x86", "false")
                     config.set(section, "architectures/x86_64", "false")
                     
-                    config.set(section, "keystore/debug", keystore_path)
+                    config.set(section, "keystore/debug", debug_keystore)
                     config.set(section, "keystore/debug_user", "androiddebugkey")
                     config.set(section, "keystore/debug_password", "android")
-                    config.set(section, "sdk/android_sdk_path", android_sdk_path)
+                    config.set(section, "custom_template/debug", "")
+                    config.set(section, "custom_template/release", "")
             
             with open(config_path, "w") as f:
                 config.write(f)
             print("Successfully updated export_presets.cfg with 64-bit and keystore settings.")
         else:
-            print("export_presets.cfg not found, skipping patch step.")
+            print("Error: export_presets.cfg not found!")
         '
 
     - name: Export Android APK (arm64 only)
       run: |
         mkdir -p build/android
+        export ANDROID_HOME=$HOME/android-sdk
         godot --verbose --headless --export-release "Android" build/android/Searchlight3D.apk
 
-    # 5. Print clean error summary if Godot build fails
     - name: Print error summary on failure
       if: failure()
       run: |
