@@ -1,7 +1,7 @@
 [application]
 config/name="Searchlight 3D"
 run/main_scene="res://Main.tscn"
-config/features=PackedStringArray("4.3", "Forward Plus")
+config/features=PackedStringArray("4.3", "Mobile")
 config/icon="res://icon.svg"
 
 [display]
@@ -13,4 +13,5 @@ window/stretch/mode="canvas_items"
 
 [rendering]
 renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.01, 0.01, 0.02, 1)
