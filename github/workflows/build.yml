@@ -25,6 +25,22 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
+    - name: Configure 64-bit Only Export
+      run: |
+        python3 -c '
+        import configparser
+        config = configparser.ConfigParser()
+        config.read("export_presets.cfg")
+        for section in config.sections():
+            if config.has_option(section, "platform") and config.get(section, "platform") == "Android":
+                config.set(section, "architectures/armv7", "false")
+                config.set(section, "architectures/arm64", "true")
+                config.set(section, "architectures/x86", "false")
+                config.set(section, "architectures/x86_64", "false")
+        with open("export_presets.cfg", "w") as configfile:
+            config.write(configfile)
+        '
+
     - name: Export Android APK
       run: |
         mkdir -p build/android
