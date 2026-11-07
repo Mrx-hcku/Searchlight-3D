@@ -16,12 +16,10 @@ jobs:
 
     - name: Download Godot 4.3 Engine and Export Templates
       run: |
-        # 1. Download Godot Editor
         wget https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
         unzip Godot_v4.3-stable_linux.x86_64.zip
         mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
         
-        # 2. Download and Extract Android Export Templates
         wget https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
         mkdir -p ~/.local/share/godot/export_templates/4.3.stable/
         unzip Godot_v4.3-stable_export_templates.tpz
@@ -33,26 +31,13 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Configure 64-bit Only Export (Reduce APK Size)
-      run: |
-        python3 -c '
-        import configparser
-        config = configparser.ConfigParser()
-        config.read("export_presets.cfg")
-        for section in config.sections():
-            if config.has_option(section, "platform") and config.get(section, "platform") == "Android":
-                config.set(section, "architectures/armv7", "false")
-                config.set(section, "architectures/arm64", "true")
-                config.set(section, "architectures/x86", "false")
-                config.set(section, "architectures/x86_64", "false")
-        with open("export_presets.cfg", "w") as configfile:
-            config.write(configfile)
-        '
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v3
 
     - name: Export Android APK (arm64 only)
       run: |
         mkdir -p build/android
-        godot --headless --export-release "Android" build/android/Searchlight3D.apk
+        godot --verbose --headless --export-release "Android" build/android/Searchlight3D.apk
 
     - name: Upload APK to GitHub Artifacts
       uses: actions/upload-artifact@v4
