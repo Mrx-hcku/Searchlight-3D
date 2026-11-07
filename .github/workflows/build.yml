@@ -84,11 +84,14 @@ jobs:
           keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
         fi
 
-    # 4. Configure Godot Android SDK & Export Settings (Arm64 only & Keystore paths)
+    # 4. Configure Godot Android SDK, ADB & Export Settings (Arm64 only)
     - name: Configure Godot Android SDK & Export Settings
       run: |
         export ANDROID_HOME=$HOME/android-sdk
         mkdir -p ~/.local/share/godot/
+        
+        # Start ADB server to resolve connection refused error
+        $ANDROID_HOME/platform-tools/adb start-server || true
         
         python3 -c '
         import os, configparser
@@ -115,15 +118,23 @@ jobs:
             
             with open(config_path, "w") as f:
                 config.write(f)
-            print("Successfully updated export_presets.cfg with 64-bit and keystore settings.")
+            print("Export presets updated successfully.")
         else:
             print("Error: export_presets.cfg not found!")
         '
+        
+        # Register Android SDK path directly in Godot's config directory for headless access
+        mkdir -p ~/.config/godot/
+        echo "[editor_paths]" > ~/.config/godot/editor_settings-4.tres
+        echo "android/android_sdk_path=\"$ANDROID_HOME\"" >> ~/.config/godot/editor_settings-4.tres
 
     - name: Export Android APK (arm64 only)
       run: |
         mkdir -p build/android
         export ANDROID_HOME=$HOME/android-sdk
+        export PATH=$PATH:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin
+        
+        adb start-server || true
         godot --verbose --headless --export-release "Android" build/android/Searchlight3D.apk
 
     - name: Print error summary on failure
