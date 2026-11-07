@@ -1,4 +1,4 @@
-Name: Build Searchlight 3D APK
+name: Build Searchlight 3D APK
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     name: Compile Godot Android Game
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -26,31 +26,28 @@ jobs:
         unzip -q Godot_v4.3-stable_linux.x86_64.zip
         sudo mv Godot_v4.3-stable_linux.x86_64 /usr/local/bin/godot
         rm Godot_v4.3-stable_linux.x86_64.zip
-        
+
         wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
         mkdir -p ~/.local/share/godot/export_templates/4.3.stable/
         unzip -q Godot_v4.3-stable_export_templates.tpz
-        if [ -d "templates" ]; then
-          mv templates/* ~/.local/share/godot/export_templates/4.3.stable/
-          rm -rf templates
-        fi
-        rm Godot_v4.3-stable_export_templates.tpz
+        mv templates/* ~/.local/share/godot/export_templates/4.3.stable/
+        rm -rf templates Godot_v4.3-stable_export_templates.tpz
 
     - name: Set up Android SDK Manually
       run: |
         export ANDROID_HOME=$HOME/android-sdk
         mkdir -p $ANDROID_HOME/cmdline-tools
-        
+
         wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
         unzip -q cmdline-tools.zip
         mkdir -p $ANDROID_HOME/cmdline-tools/latest
-        mv cmdline-tools/* $ANDROID_HOME/cmdline-tools/latest/ 2>/dev/null || true
+        mv cmdline-tools/* $ANDROID_HOME/cmdline-tools/latest/
         rm -rf cmdline-tools.zip cmdline-tools
-        
+
         echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
         echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
         echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
-        
+
         export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
         yes | sdkmanager --sdk_root=$ANDROID_HOME --licenses || true
         sdkmanager --sdk_root=$ANDROID_HOME "platform-tools" "platforms;android-34" "build-tools;34.0.0"
@@ -60,61 +57,39 @@ jobs:
         mkdir -p ~/.android
         keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-    - name: Configure Godot Editor Settings & Fix Export Preset
+    - name: Create icon.svg if missing
+      run: |
+        if [ ! -f icon.svg ]; then
+          cat > icon.svg << 'EOF'
+        <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+          <rect width="128" height="128" rx="16" fill="#0a0a14"/>
+          <circle cx="64" cy="64" r="36" fill="#ffe27a"/>
+          <circle cx="64" cy="64" r="18" fill="#fff6cf"/>
+        </svg>
+        EOF
+        fi
+
+    - name: Configure Godot Editor Settings
       run: |
         mkdir -p ~/.config/godot
-        cat << 'EOF' > ~/.config/godot/editor_settings-4.tres
-        [resource]
-        
-        export/android/android_sdk_path = "/home/runner/android-sdk"
-        EOF
+        {
+          echo '[gd_resource type="EditorSettings" format=3]'
+          echo ''
+          echo '[resource]'
+          echo 'export/android/android_sdk_path = "/home/runner/android-sdk"'
+          echo "export/android/java_sdk_path = \"$JAVA_HOME\""
+          echo 'export/android/debug_keystore = "/home/runner/.android/debug.keystore"'
+          echo 'export/android/debug_keystore_user = "androiddebugkey"'
+          echo 'export/android/debug_keystore_pass = "android"'
+        } > ~/.config/godot/editor_settings-4.3.tres
 
-        python3 -c '
-        import configparser, os
-        config = configparser.ConfigParser()
-        config.optionxform = str
-        
-        config_path = "export_presets.cfg"
-        if os.path.exists(config_path):
-            config.read(config_path)
-            debug_keystore = os.path.expanduser("~/.android/debug.keystore")
-            
-            for section in config.sections():
-                if config.has_option(section, "platform") and config.get(section, "platform") == "Android":
-                    config.set(section, "architectures/armv7", "false")
-                    config.set(section, "architectures/arm64", "true")
-                    config.set(section, "architectures/x86", "false")
-                    config.set(section, "architectures/x86_64", "false")
-                    
-                    config.set(section, "keystore/debug", debug_keystore)
-                    config.set(section, "keystore/debug_user", "androiddebugkey")
-                    config.set(section, "keystore/debug_password", "android")
-                    
-                    if not config.has_option(section, "package/unique_name"):
-                        config.set(section, "package/unique_name", "com.danshx.searchlight3d")
-                        
-            with open(config_path, "w") as f:
-                config.write(f)
-        '
-
-    - name: Install Android Build Template
-      run: |
-        mkdir -p android/
-        TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
-        if [ -d "$TEMPLATE_DIR/android" ]; then
-          cp -r $TEMPLATE_DIR/android/* android/ || true
-        else
-          godot --headless --export-pack "Android" /dev/null || true
-        fi
+    - name: Import Project Resources
+      run: godot --headless --import || true
 
     - name: Export Android APK
       run: |
         mkdir -p build/android
-        export ANDROID_HOME=$HOME/android-sdk
-        export PATH=$PATH:$ANDROID_HOME/platform-tools
-        
-        adb start-server || true
-        godot --verbose --headless --export-release "Android" build/android/Searchlight3D.apk
+        godot --verbose --headless --export-debug "Android" build/android/Searchlight3D.apk
 
     - name: Upload APK to GitHub Artifacts
       uses: actions/upload-artifact@v4
