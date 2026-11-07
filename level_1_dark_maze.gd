@@ -46,7 +46,7 @@ func sfx(sfx_name: String) -> void:
 # ---------- Maze ----------
 func generate_dark_maze() -> void:
 	var wall_material := StandardMaterial3D.new()
-	wall_material.albedo_color = Color(0.12, 0.12, 0.18)
+	wall_material.albedo_color = Color(0.16, 0.16, 0.22)
 	wall_material.roughness = 0.95
 
 	# Exit darwaza: laal chamakta block

@@ -14,7 +14,12 @@ window/stretch/aspect="expand"
 window/handheld/orientation=1
 window/energy_saving/keep_screen_on=true
 
+[audio]
+
+general/text_to_speech=true
+
 [rendering]
 renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.01, 0.01, 0.02, 1)
+anti_aliasing/quality/use_debanding=true

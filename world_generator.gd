@@ -12,11 +12,17 @@ func setup_environment() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.02, 0.02, 0.05)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.5, 0.55, 0.8)
-	env.ambient_light_energy = 0.7
+	env.ambient_light_color = Color(0.55, 0.60, 0.85)
+	env.ambient_light_energy = 1.3
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+
+	# Chandni: Main.tscn ki directional light ko thoda tez kar do
+	var moon := get_node_or_null("../DirectionalLight3D") as DirectionalLight3D
+	if moon:
+		moon.light_color = Color(0.5, 0.55, 0.85)
+		moon.light_energy = 0.6
 
 func generate_procedural_environment() -> void:
 	# Ground (visual)
@@ -44,7 +50,7 @@ func generate_procedural_environment() -> void:
 	rng.randomize()
 
 	var pillar_mat := StandardMaterial3D.new()
-	pillar_mat.albedo_color = Color(0.08, 0.08, 0.12)
+	pillar_mat.albedo_color = Color(0.12, 0.12, 0.17)
 	pillar_mat.roughness = 0.9
 
 	for i in range(30):

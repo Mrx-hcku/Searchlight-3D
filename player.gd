@@ -1,20 +1,26 @@
 extends CharacterBody3D
 
-@export var speed: float = 6.0
-@export var touch_sensitivity: float = 0.004
+# ---- Tuning (yahan se feel badal sakte ho) ----
+@export var max_speed: float = 5.5
+@export var accel: float = 45.0              # jitna zyada, utna turant response
+@export var look_sensitivity: float = 0.008  # jitna zyada, utna tez ghumna
+@export var base_torch_energy: float = 14.0
+
+const JOY_RADIUS: float = 110.0   # joystick ka radius (1080 wide screen ke hisaab se)
+const JOY_DEADZONE: float = 0.10
 
 var camera: Camera3D
 var spot_light: SpotLight3D
 var game_manager: Node
 
-# Touch Controls State for Android
+# Touch state
 var touch_screen_size: Vector2
 var look_touch_index: int = -1
 var move_touch_index: int = -1
-
-var last_look_pos: Vector2 = Vector2.ZERO
 var move_joystick_center: Vector2 = Vector2.ZERO
-var move_direction_input: Vector2 = Vector2.ZERO
+var joy_default_center: Vector2 = Vector2.ZERO
+var move_input: Vector2 = Vector2.ZERO   # raw, length 0..1
+
 var is_torch_on: bool = true
 var step_timer: float = 0.0
 
@@ -24,31 +30,33 @@ var joy_knob: Panel
 
 func _ready() -> void:
 	touch_screen_size = get_viewport().get_visible_rect().size
+	joy_default_center = Vector2(240, touch_screen_size.y - 430)
+	move_joystick_center = joy_default_center
 	game_manager = get_node_or_null("../GameManager")
 
 	# Collision
 	var col := CollisionShape3D.new()
 	var shape := CapsuleShape3D.new()
-	shape.radius = 0.4
+	shape.radius = 0.5
 	shape.height = 1.8
 	col.shape = shape
 	col.position = Vector3(0, 0.9, 0)
 	add_child(col)
 
-	# Camera Setup
+	# Camera
 	camera = Camera3D.new()
-	camera.position = Vector3(0, 1.8, 0)
+	camera.position = Vector3(0, 1.7, 0)
+	camera.near = 0.08
 	add_child(camera)
 
-	# High-Intensity Android Searchlight Torch
+	# Searchlight torch
 	spot_light = SpotLight3D.new()
 	spot_light.light_color = Color(0.9, 0.95, 1.0)
-	spot_light.light_energy = 16.0
+	spot_light.light_energy = base_torch_energy
 	spot_light.spot_range = 35.0
 	spot_light.spot_angle = 35.0
 	spot_light.shadow_enabled = true
 	camera.add_child(spot_light)
-	spot_light.position = Vector3(0, 0, 0)
 
 	setup_touch_ui()
 
@@ -56,6 +64,7 @@ func play_sfx(sfx_name: String) -> void:
 	if game_manager and game_manager.has_method("play_sfx"):
 		game_manager.play_sfx(sfx_name)
 
+# ---------------- UI ----------------
 func setup_touch_ui() -> void:
 	var canvas := CanvasLayer.new()
 	add_child(canvas)
@@ -63,7 +72,7 @@ func setup_touch_ui() -> void:
 	var w: float = touch_screen_size.x
 	var h: float = touch_screen_size.y
 
-	# Free Fire style gol Torch button (neeche right me, anguthe ki pahunch me)
+	# Gol Torch button (neeche right, anguthe ki pahunch me)
 	torch_btn = Button.new()
 	torch_btn.custom_minimum_size = Vector2(120, 120)
 	torch_btn.size = Vector2(120, 120)
@@ -74,17 +83,28 @@ func setup_touch_ui() -> void:
 	canvas.add_child(torch_btn)
 	update_torch_button()
 
-	# Chhota crosshair (beech me)
+	# Crosshair
 	var dot := make_circle(10.0, Color(1, 1, 1, 0.5))
 	dot.position = Vector2(w / 2.0 - 5.0, h / 2.0 - 5.0)
-	dot.visible = true
 	canvas.add_child(dot)
 
-	# Visible joystick (touch karne par dikhta hai)
-	joy_base = make_circle(180.0, Color(1, 1, 1, 0.12))
-	joy_knob = make_circle(80.0, Color(1, 1, 1, 0.35))
+	# Joystick: idle me halka ring dikhta hai, touch par wahin aa jata hai
+	joy_base = make_circle(JOY_RADIUS * 2.0, Color(1, 1, 1, 0.10))
+	joy_knob = make_circle(90.0, Color(1, 1, 1, 0.35))
 	canvas.add_child(joy_base)
 	canvas.add_child(joy_knob)
+
+func make_circle(diameter: float, color: Color) -> Panel:
+	var p := Panel.new()
+	p.size = Vector2(diameter, diameter)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = color
+	sb.set_corner_radius_all(int(diameter / 2.0))
+	sb.border_color = Color(1, 1, 1, 0.4)
+	sb.set_border_width_all(2)
+	p.add_theme_stylebox_override("panel", sb)
+	return p
 
 func update_torch_button() -> void:
 	var sb := StyleBoxFlat.new()
@@ -107,78 +127,81 @@ func toggle_torch() -> void:
 	update_torch_button()
 	play_sfx("click")
 
-func make_circle(diameter: float, color: Color) -> Panel:
-	var p := Panel.new()
-	p.size = Vector2(diameter, diameter)
-	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = color
-	sb.set_corner_radius_all(int(diameter / 2.0))
-	sb.border_color = Color(1, 1, 1, 0.4)
-	sb.set_border_width_all(2)
-	p.add_theme_stylebox_override("panel", sb)
-	p.visible = false
-	return p
-
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	var active: bool = move_touch_index != -1
-	joy_base.visible = active
-	joy_knob.visible = active
-	if active:
-		joy_base.position = move_joystick_center - joy_base.size / 2.0
-		joy_knob.position = move_joystick_center + move_direction_input * 60.0 - joy_knob.size / 2.0
+	var center: Vector2 = move_joystick_center if active else joy_default_center
+	var knob_off: Vector2 = move_input * JOY_RADIUS if active else Vector2.ZERO
+	joy_base.position = center - joy_base.size / 2.0
+	joy_knob.position = center + knob_off - joy_knob.size / 2.0
+	var a: float = 1.0 if active else 0.35
+	joy_base.modulate.a = lerpf(joy_base.modulate.a, a, 14.0 * delta)
+	joy_knob.modulate.a = joy_base.modulate.a
+
+# ---------------- Input ----------------
+# Zones (Free Fire / PUBG / COD Mobile jaisa):
+#  - Left half ka neeche wala 70%  -> movement joystick (jahan ungli rakho wahin banta hai)
+#  - Baaki sab (right half + left-upar) -> camera ghumana
+#  - Torch button par touch -> sirf button
+func is_move_zone(p: Vector2) -> bool:
+	return p.x < touch_screen_size.x * 0.5 and p.y > touch_screen_size.y * 0.3
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		if event.pressed:
-			# Torch button par touch ko movement/look na samjho
 			if torch_btn.get_global_rect().has_point(event.position):
 				return
-			# Right side: look around
-			if event.position.x > touch_screen_size.x / 2 and look_touch_index == -1:
+			if is_move_zone(event.position):
+				if move_touch_index == -1:
+					move_touch_index = event.index
+					move_joystick_center = event.position
+					move_input = Vector2.ZERO
+			elif look_touch_index == -1:
 				look_touch_index = event.index
-				last_look_pos = event.position
-			# Left side: movement joystick
-			elif event.position.x <= touch_screen_size.x / 2 and move_touch_index == -1:
-				move_touch_index = event.index
-				move_joystick_center = event.position
 		else:
 			if event.index == look_touch_index:
 				look_touch_index = -1
 			elif event.index == move_touch_index:
 				move_touch_index = -1
-				move_direction_input = Vector2.ZERO
+				move_input = Vector2.ZERO
 
 	elif event is InputEventScreenDrag:
 		if event.index == look_touch_index:
-			var delta_move: Vector2 = event.position - last_look_pos
-			last_look_pos = event.position
-
-			rotate_y(-delta_move.x * touch_sensitivity)
-			camera.rotate_x(-delta_move.y * touch_sensitivity)
+			var rel: Vector2 = event.relative
+			# Tez swipe par thoda zyada ghumao (flick turn)
+			var amp: float = 1.0 + clampf(rel.length() / 50.0, 0.0, 0.7)
+			rotate_y(-rel.x * look_sensitivity * amp)
+			camera.rotate_x(-rel.y * look_sensitivity * amp)
 			camera.rotation.x = clampf(camera.rotation.x, deg_to_rad(-80), deg_to_rad(80))
 
 		elif event.index == move_touch_index:
 			var offset: Vector2 = event.position - move_joystick_center
-			move_direction_input = offset.limit_length(60.0) / 60.0
+			# Ungli radius se bahar gayi to joystick uske saath khisakta hai
+			if offset.length() > JOY_RADIUS:
+				move_joystick_center += offset.normalized() * (offset.length() - JOY_RADIUS)
+				offset = event.position - move_joystick_center
+			move_input = offset / JOY_RADIUS
 
+# ---------------- Movement ----------------
 func _physics_process(delta: float) -> void:
 	if not is_on_floor():
 		velocity.y -= 20.0 * delta
 
-	var direction := (transform.basis * Vector3(move_direction_input.x, 0, move_direction_input.y)).normalized()
+	var mag: float = move_input.length()
+	var wish := Vector3.ZERO
+	if mag > JOY_DEADZONE:
+		var strength: float = clampf((mag - JOY_DEADZONE) / (1.0 - JOY_DEADZONE), 0.0, 1.0)
+		strength = pow(strength, 0.8) # halka dhakka bhi achhi speed de
+		var dir2: Vector2 = move_input.normalized() * strength
+		wish = transform.basis * Vector3(dir2.x, 0, dir2.y) * max_speed
 
-	if direction:
-		velocity.x = direction.x * speed
-		velocity.z = direction.z * speed
-	else:
-		velocity.x = move_toward(velocity.x, 0, speed)
-		velocity.z = move_toward(velocity.z, 0, speed)
-
+	velocity.x = move_toward(velocity.x, wish.x, accel * delta)
+	velocity.z = move_toward(velocity.z, wish.z, accel * delta)
 	move_and_slide()
 
+	update_torch_energy()
+
 	# Footsteps
-	var moving: bool = direction != Vector3.ZERO and is_on_floor()
+	var moving: bool = Vector2(velocity.x, velocity.z).length() > 1.0 and is_on_floor()
 	if moving:
 		step_timer += delta
 		if step_timer >= 0.42:
@@ -186,3 +209,18 @@ func _physics_process(delta: float) -> void:
 			play_sfx("step")
 	else:
 		step_timer = 0.3
+
+# Deewar ke bilkul paas torch ki roshni dheemi, taaki screen safed na ho jaye
+func update_torch_energy() -> void:
+	if not is_torch_on:
+		return
+	var origin: Vector3 = camera.global_position
+	var fwd: Vector3 = -camera.global_transform.basis.z
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + fwd * 4.0)
+	query.exclude = [get_rid()]
+	var hit: Dictionary = get_world_3d().direct_space_state.intersect_ray(query)
+	var f: float = 1.0
+	if not hit.is_empty():
+		var d: float = origin.distance_to(hit["position"])
+		f = clampf((d - 0.4) / 2.0, 0.1, 1.0)
+	spot_light.light_energy = lerpf(spot_light.light_energy, base_torch_energy * f, 0.3)
