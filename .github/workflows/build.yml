@@ -30,7 +30,10 @@ jobs:
         wget -q https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz
         mkdir -p ~/.local/share/godot/export_templates/4.3.stable/
         unzip -q Godot_v4.3-stable_export_templates.tpz
-        mv templates/* ~/.local/share/godot/export_templates/4.3.stable/
+        if [ -d "templates" ]; then
+          mv templates/* ~/.local/share/godot/export_templates/4.3.stable/
+          rm -rf templates
+        fi
         rm Godot_v4.3-stable_export_templates.tpz
 
     - name: Set up Android SDK Manually
@@ -57,9 +60,8 @@ jobs:
         mkdir -p ~/.android
         keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
-    - name: Configure Godot Editor Settings & Export Preset
+    - name: Configure Godot Editor Settings & Fix Export Preset
       run: |
-        # 1. Create proper Godot editor settings file so headless mode recognizes Android SDK
         mkdir -p ~/.config/godot
         cat << 'EOF' > ~/.config/godot/editor_settings-4.tres
         [resource]
@@ -67,29 +69,39 @@ jobs:
         export/android/android_sdk_path = "/home/runner/android-sdk"
         EOF
 
-        # 2. Patch export_presets.cfg for arm64 & Debug Keystore
         python3 -c '
         import configparser, os
         config = configparser.ConfigParser()
-        config.read("export_presets.cfg")
+        config.optionxform = str
         
-        keystore_path = os.path.expanduser("~/.android/debug.keystore")
-        
-        for section in config.sections():
-            if config.has_option(section, "platform") and config.get(section, "platform") == "Android":
-                config.set(section, "architectures/armv7", "false")
-                config.set(section, "architectures/arm64", "true")
-                config.set(section, "architectures/x86", "false")
-                config.set(section, "architectures/x86_64", "false")
-                
-                config.set(section, "keystore/debug", keystore_path)
-                config.set(section, "keystore/debug_user", "androiddebugkey")
-                config.set(section, "keystore/debug_password", "android")
-                
-        with open("export_presets.cfg", "w") as f:
-            config.write(f)
-        print("export_presets.cfg successfully patched.")
+        config_path = "export_presets.cfg"
+        if os.path.exists(config_path):
+            config.read(config_path)
+            debug_keystore = os.path.expanduser("~/.android/debug.keystore")
+            
+            for section in config.sections():
+                if config.has_option(section, "platform") and config.get(section, "platform") == "Android":
+                    config.set(section, "architectures/armv7", "false")
+                    config.set(section, "architectures/arm64", "true")
+                    config.set(section, "architectures/x86", "false")
+                    config.set(section, "architectures/x86_64", "false")
+                    
+                    config.set(section, "keystore/debug", debug_keystore)
+                    config.set(section, "keystore/debug_user", "androiddebugkey")
+                    config.set(section, "keystore/debug_password", "android")
+                    
+                    if not config.has_option(section, "package/unique_name"):
+                        config.set(section, "package/unique_name", "com.danshx.searchlight3d")
+                        
+            with open(config_path, "w") as f:
+                config.write(f)
         '
+
+    - name: Install Android Build Template
+      run: |
+        # Godot 4 requires the android build template folder to be present inside the project for custom/release exports
+        mkdir -p android/build
+        godot --headless --export-pack "Android" /dev/null || true
 
     - name: Export Android APK
       run: |
@@ -97,10 +109,7 @@ jobs:
         export ANDROID_HOME=$HOME/android-sdk
         export PATH=$PATH:$ANDROID_HOME/platform-tools
         
-        # Start ADB server to prevent connection refused issues
         adb start-server || true
-        
-        # Run Godot headless export
         godot --verbose --headless --export-release "Android" build/android/Searchlight3D.apk
 
     - name: Upload APK to GitHub Artifacts
