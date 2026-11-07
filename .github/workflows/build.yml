@@ -1,4 +1,4 @@
-name: Build Searchlight 3D APK
+Name: Build Searchlight 3D APK
 
 on:
   push:
@@ -99,9 +99,13 @@ jobs:
 
     - name: Install Android Build Template
       run: |
-        # Godot 4 requires the android build template folder to be present inside the project for custom/release exports
-        mkdir -p android/build
-        godot --headless --export-pack "Android" /dev/null || true
+        mkdir -p android/
+        TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.3.stable"
+        if [ -d "$TEMPLATE_DIR/android" ]; then
+          cp -r $TEMPLATE_DIR/android/* android/ || true
+        else
+          godot --headless --export-pack "Android" /dev/null || true
+        fi
 
     - name: Export Android APK
       run: |
