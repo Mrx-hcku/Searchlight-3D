@@ -3,41 +3,74 @@ extends Node3D
 @export var world_size: int = 50
 
 func _ready() -> void:
+	setup_environment()
 	generate_procedural_environment()
 
+# Halki ambient roshni taaki andhere me bhi aas-paas thoda dikhe
+func setup_environment() -> void:
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.02, 0.02, 0.05)
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.5, 0.55, 0.8)
+	env.ambient_light_energy = 0.7
+	var we := WorldEnvironment.new()
+	we.environment = env
+	add_child(we)
+
 func generate_procedural_environment() -> void:
-	var ground_mesh = PlaneMesh.new()
+	# Ground (visual)
+	var ground_mesh := PlaneMesh.new()
 	ground_mesh.size = Vector2(200, 200)
-	
-	var ground_instance = MeshInstance3D.new()
-	ground_instance.mesh = ground_mesh
-	
-	var material = StandardMaterial3D.new()
-	material.albedo_color = Color(0.03, 0.03, 0.05)
+
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.10, 0.10, 0.14)
 	material.roughness = 0.8
-	material.metallic = 0.2
+	material.metallic = 0.0
+
+	var ground_instance := MeshInstance3D.new()
+	ground_instance.mesh = ground_mesh
 	ground_instance.material_override = material
-	
 	add_child(ground_instance)
-	
-	var rng = RandomNumberGenerator.new()
+
+	# Ground (collision) - y=0 par infinite floor
+	var ground_body := StaticBody3D.new()
+	var ground_col := CollisionShape3D.new()
+	ground_col.shape = WorldBoundaryShape3D.new()
+	ground_body.add_child(ground_col)
+	add_child(ground_body)
+
+	var rng := RandomNumberGenerator.new()
 	rng.randomize()
-	
+
+	var pillar_mat := StandardMaterial3D.new()
+	pillar_mat.albedo_color = Color(0.08, 0.08, 0.12)
+	pillar_mat.roughness = 0.9
+
 	for i in range(30):
-		var p_pillar = MeshInstance3D.new()
-		var box = BoxMesh.new()
+		var box := BoxMesh.new()
 		box.size = Vector3(rng.randf_range(3, 8), rng.randf_range(15, 30), rng.randf_range(3, 8))
+
+		var x_pos := rng.randf_range(-45, 45)
+		var z_pos := rng.randf_range(-45, 45)
+
+		# Maze (x,z: -22 se 18) ke andar pillar nahi
+		if x_pos > -30 and x_pos < 26 and z_pos > -30 and z_pos < 26:
+			continue
+
+		var p_pillar := MeshInstance3D.new()
 		p_pillar.mesh = box
-		
-		var pillar_mat = StandardMaterial3D.new()
-		pillar_mat.albedo_color = Color(0.02, 0.02, 0.03)
-		pillar_mat.roughness = 0.9
 		p_pillar.material_override = pillar_mat
-		
-		var x_pos = rng.randf_range(-80, 80)
-		var z_pos = rng.randf_range(-80, 80)
-		if abs(x_pos) > 10 or abs(z_pos) > 10:
-			p_pillar.position = Vector3(x_pos, box.size.y / 2, z_pos)
-			add_child(p_pillar)
-			
+		p_pillar.position = Vector3(x_pos, box.size.y / 2.0, z_pos)
+
+		var body := StaticBody3D.new()
+		var col := CollisionShape3D.new()
+		var shape := BoxShape3D.new()
+		shape.size = box.size
+		col.shape = shape
+		body.add_child(col)
+		p_pillar.add_child(body)
+
+		add_child(p_pillar)
+
 	print("Procedural Dark Environment & Structures Generated Successfully.")
