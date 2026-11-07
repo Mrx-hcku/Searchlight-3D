@@ -1,22 +1,23 @@
 extends Node
 
-# गेम का मिस्ट्री और क्लू सिस्टम
-signal clue_found(clue_name: String)
+var ambient_player: AudioStreamPlayer
+var mysterious_sounds = []
 
-var current_clue_index: int = 0
-var clues: Array = [
-    "Anjaan gufa ka pehla raaz: Purana pathar khol raha hai rasta.",
-    "Ghane jungle ka raaz: Ped ke peechhe chhipa hai sanket.",
-    "Purane khandhar ka raaz: Roshni padte hi khula gupt dwar."
-]
+func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	setup_audio_system()
 
-func _ready():
-    print("Searchlight 3D Mystery System Initialized.")
+func setup_audio_system() -> void:
+	ambient_player = AudioStreamPlayer.new()
+	add_child(ambient_player)
+	print("Atmospheric Audio Manager Initialized for Searchlight 3D.")
+	play_creepy_ambience()
 
-func check_puzzle(clue_id: int):
-    if clue_id == current_clue_index:
-        emit_signal("clue_found", clues[current_clue_index])
-        current_clue_index += 1
-        print("Agla raaz khul gaya!")
-    else:
-        print("Sahi jagah torch ki roshni daalo!")
+func play_creepy_ambience() -> void:
+	var timer = Timer.new()
+	timer.wait_time = 12.0
+	timer.autostart = true
+	timer.timeout.connect(func():
+		print("Playing procedural low-frequency cave drone / forest whisper...")
+	)
+	add_child(timer)
