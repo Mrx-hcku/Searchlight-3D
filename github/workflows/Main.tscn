@@ -1,0 +1,30 @@
+[gd_scene load_steps=5 format=3]
+
+[node name="Main" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_dark")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.5, 0.866025, 0, -0.866025, 0.5, 0, 10, 0)
+light_color = Color(0.05, 0.05, 0.1, 1)
+light_energy = 0.2
+
+[node name="Player" type="CharacterBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+
+[node name="Camera3D" type="Camera3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.5, 0)
+
+[node name="Searchlight" type="SpotLight3D" parent="Player/Camera3D"]
+light_color = Color(0.8, 0.9, 1, 1)
+light_energy = 5.0
+spot_range = 15.0
+spot_angle = 35.0
+
+[sub_resource type="Environment" id="Environment_dark"]
+background_mode = 1
+background_color = Color(0.01, 0.01, 0.02, 1)
+fog_enabled = true
+fog_light_color = Color(0.02, 0.02, 0.04, 1)
+fog_density = 0.05
