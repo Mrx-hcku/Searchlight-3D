@@ -432,12 +432,36 @@ func _on_exit_entered(body: Node3D) -> void:
 	print("LEVEL 1 COMPLETE")
 
 	# Card nahi, sirf awaaz: tumhari welcome voice (audio/welcome_shadow_world)
+	var welcome_len: float = 0.0
+	if game_manager_node and game_manager_node.has_method("load_audio"):
+		var st: AudioStream = game_manager_node.load_audio("res://audio/welcome_shadow_world")
+		if st:
+			welcome_len = st.get_length()
 	if game_manager_node and game_manager_node.has_method("play_file"):
 		game_manager_node.play_file("res://audio/welcome_shadow_world", 3.0)
 	if game_manager_node and game_manager_node.has_method("play_sfx"):
 		game_manager_node.play_sfx("complete", -6.0)
 
 	start_magical_world()
+	start_level_two(welcome_len)
+
+# Level 2 ka maidan banao; welcome awaaz khatam hone ke baad uske instructions ka card aata hai
+func start_level_two(wait: float) -> void:
+	var script := load("res://level_2_field.gd") as Script
+	if script == null:
+		return
+	if door_light:
+		door_light.visible = false # roshni ki ginti kam rakhne ke liye
+
+	var l2 := Node3D.new()
+	l2.name = "Level2Field"
+	l2.set_script(script)
+	get_parent().add_child(l2)
+
+	await get_tree().create_timer(wait + 0.8).timeout
+	show_scroll("मुसाफिर, यह परछाइयों का मैदान है... पराग ज्योतिषपुर का रास्ता यहीं से गुज़रता है। मैदान के चारों कोनों पर पत्थर की मशालें खड़ी हैं। अपनी सर्चलाइट की किरण टिकाकर उन्हें जगाओ। अँधेरे से परछाइयाँ तुम्हारी ओर बढ़ेंगी... उन पर रोशनी डालो, वे राख हो जाएँगी। जब चारों मशालें जल उठेंगी, तब महादेव का द्वार प्रकट होगा।", "res://audio/level2_intro")
+	if is_instance_valid(l2) and l2.has_method("activate"):
+		l2.activate()
 
 # ---------- Jaadui duniya (darwaze ke bahar) ----------
 func start_magical_world() -> void:

@@ -3,11 +3,15 @@ extends CharacterBody3D
 # ---- Tuning (yahan se feel badal sakte ho) ----
 @export var max_speed: float = 5.5
 @export var accel: float = 45.0              # jitna zyada, utna turant response
-@export var look_sensitivity: float = 0.008  # jitna zyada, utna tez ghumna
+@export var look_sensitivity: float = 0.0055 # radian per pixel: right zone (540px) ka ek swipe ~170 degree
 @export var base_torch_energy: float = 14.0
 
 const JOY_RADIUS: float = 110.0   # joystick ka radius (1080 wide screen ke hisaab se)
 const JOY_DEADZONE: float = 0.10
+const LOOK_SLOP: float = 8.0       # itna hilne par hi camera ghumega (ungli ke chhote kampan ignore)
+const LOOK_SMOOTH: float = 0.03    # camera smoothing (second)
+const LOOK_Y_SCALE: float = 0.75   # upar-neeche thoda dheema, taaki camera bhatke nahi
+const LOOK_PITCH_LIMIT: float = 75.0
 
 var camera: Camera3D
 var spot_light: SpotLight3D
@@ -16,6 +20,9 @@ var game_manager: Node
 # Touch state
 var touch_screen_size: Vector2
 var look_touch_index: int = -1
+var look_start_pos: Vector2 = Vector2.ZERO
+var look_started: bool = false
+var look_pending: Vector2 = Vector2.ZERO
 var move_touch_index: int = -1
 var move_joystick_center: Vector2 = Vector2.ZERO
 var joy_default_center: Vector2 = Vector2.ZERO
@@ -149,6 +156,15 @@ func toggle_torch() -> void:
 	play_sfx("click")
 
 func _process(delta: float) -> void:
+	# Camera smoothing: input thoda thoda karke lagta hai, jhatka nahi
+	if look_pending != Vector2.ZERO:
+		var k: float = 1.0 - exp(-delta / LOOK_SMOOTH)
+		var step: Vector2 = look_pending * k
+		look_pending -= step
+		rotate_y(-step.x * look_sensitivity)
+		camera.rotate_x(-step.y * look_sensitivity * LOOK_Y_SCALE)
+		camera.rotation.x = clampf(camera.rotation.x, deg_to_rad(-LOOK_PITCH_LIMIT), deg_to_rad(LOOK_PITCH_LIMIT))
+
 	var active: bool = move_touch_index != -1
 	var center: Vector2 = move_joystick_center if active else joy_default_center
 	var knob_off: Vector2 = move_input * JOY_RADIUS if active else Vector2.ZERO
@@ -178,6 +194,9 @@ func _input(event: InputEvent) -> void:
 					move_input = Vector2.ZERO
 			elif look_touch_index == -1:
 				look_touch_index = event.index
+				look_start_pos = event.position
+				look_started = false
+				look_pending = Vector2.ZERO
 		else:
 			if event.index == look_touch_index:
 				look_touch_index = -1
@@ -187,12 +206,14 @@ func _input(event: InputEvent) -> void:
 
 	elif event is InputEventScreenDrag:
 		if event.index == look_touch_index:
-			var rel: Vector2 = event.relative
-			# Tez swipe par thoda zyada ghumao (flick turn)
-			var amp: float = 1.0 + clampf(rel.length() / 50.0, 0.0, 0.7)
-			rotate_y(-rel.x * look_sensitivity * amp)
-			camera.rotate_x(-rel.y * look_sensitivity * amp)
-			camera.rotation.x = clampf(camera.rotation.x, deg_to_rad(-80), deg_to_rad(80))
+			# Ungli thodi hile tabhi camera chale (touch slop)
+			if not look_started and event.position.distance_to(look_start_pos) >= LOOK_SLOP:
+				look_started = true
+			if look_started:
+				var rel: Vector2 = event.relative
+				# Bahut halka speed-acceleration (max 25%), taaki aim consistent rahe
+				var amp: float = 1.0 + clampf((rel.length() - 15.0) / 80.0, 0.0, 0.25)
+				look_pending += rel * amp
 
 		elif event.index == move_touch_index:
 			var offset: Vector2 = event.position - move_joystick_center

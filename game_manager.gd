@@ -101,8 +101,16 @@ func build_sfx() -> void:
 	sfx["door"] = make_wav(rumble(2.2))
 	sfx["whisper"] = make_wav(whisper(3.0))
 	sfx["creak"] = make_wav(creak(2.2))
+	sfx["hit"] = make_wav(noise_burst(0.35, 9.0, 0.12, 55.0))
+	sfx["water"] = make_wav(water(4.0), true)
 
-func make_wav(samples: PackedFloat32Array) -> AudioStreamWAV:
+# Level 2 ke jharne ki awaaz ke liye stream
+func get_sfx_stream(sfx_name: String) -> AudioStream:
+	if sfx.has(sfx_name):
+		return sfx[sfx_name]
+	return null
+
+func make_wav(samples: PackedFloat32Array, loop: bool = false) -> AudioStreamWAV:
 	var data := PackedByteArray()
 	data.resize(samples.size() * 2)
 	for i in range(samples.size()):
@@ -112,6 +120,10 @@ func make_wav(samples: PackedFloat32Array) -> AudioStreamWAV:
 	wav.mix_rate = int(MIX_RATE)
 	wav.stereo = false
 	wav.data = data
+	if loop:
+		wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		wav.loop_begin = 0
+		wav.loop_end = samples.size()
 	return wav
 
 func chime(freqs: Array, dur: float) -> PackedFloat32Array:
@@ -207,4 +219,18 @@ func creak(dur: float) -> PackedFloat32Array:
 		var saw: float = (phase / PI) - 1.0
 		var env: float = sin(PI * k)
 		out[i] = (saw * 0.35 + sin(phase * 2.0) * 0.15) * env * 0.6
+	return out
+
+# Jharne ki awaaz (loop): halka shor + gehri gunj
+func water(dur: float) -> PackedFloat32Array:
+	var n := int(dur * MIX_RATE)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var a := 0.0
+	var b := 0.0
+	for i in range(n):
+		var nz: float = rng.randf_range(-1.0, 1.0)
+		a = lerpf(a, nz, 0.30)
+		b = lerpf(b, nz, 0.05)
+		out[i] = (a * 0.5 + b * 1.2) * 0.5
 	return out

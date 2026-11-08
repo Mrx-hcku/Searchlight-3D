@@ -29,6 +29,8 @@ func generate_codex_mountains() -> void:
 	mat.roughness = 0.9
 
 	for i in range(8):
+		if i == 0:
+			continue # poorab ka pahaad hata hai: wahin se Level 2 ke maidan ka raasta jata hai
 		var box := BoxMesh.new()
 		box.size = Vector3(15, rng.randf_range(25, 40), 15)
 
