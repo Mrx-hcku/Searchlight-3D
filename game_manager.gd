@@ -75,6 +75,11 @@ func load_audio(base: String) -> AudioStream:
 	return null
 
 # User ki apni sound file bajao. File mili to true, nahi to false.
+# Pehle tumhari file (base naam), na mile to code wali awaaz fallback se
+func play_any(base: String, fallback: String, volume_db: float = 0.0) -> void:
+	if not play_file(base, volume_db):
+		play_sfx(fallback, volume_db)
+
 func play_file(base: String, volume_db: float = 0.0) -> bool:
 	var stream: AudioStream = load_audio(base)
 	if stream == null:
@@ -102,6 +107,7 @@ func build_sfx() -> void:
 	sfx["whisper"] = make_wav(whisper(3.0))
 	sfx["creak"] = make_wav(creak(2.2))
 	sfx["hit"] = make_wav(noise_burst(0.35, 9.0, 0.12, 55.0))
+	sfx["slash"] = make_wav(whoosh(0.25))
 	sfx["water"] = make_wav(water(4.0), true)
 
 # Level 2 ke jharne ki awaaz ke liye stream

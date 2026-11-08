@@ -1,5 +1,7 @@
 extends CharacterBody3D
 
+signal died
+
 # ---- Tuning (yahan se feel badal sakte ho) ----
 @export var max_speed: float = 5.5
 @export var accel: float = 45.0              # jitna zyada, utna turant response
@@ -12,6 +14,8 @@ const LOOK_SLOP: float = 8.0       # itna hilne par hi camera ghumega (ungli ke 
 const LOOK_SMOOTH: float = 0.03    # camera smoothing (second)
 const LOOK_Y_SCALE: float = 0.75   # upar-neeche thoda dheema, taaki camera bhatke nahi
 const LOOK_PITCH_LIMIT: float = 75.0
+const SWORD_RANGE: float = 3.0      # talwar kitni door tak lagti hai (meter)
+const SWORD_COOLDOWN: float = 0.6
 
 var camera: Camera3D
 var spot_light: SpotLight3D
@@ -37,6 +41,17 @@ var step_loop_active: bool = false
 var _step_tween: Tween
 
 var torch_btn: Button
+var attack_btn: Button
+var health_bar: ProgressBar
+var damage_flash: ColorRect
+var sword_pivot: Node3D
+var sword_tween: Tween
+
+# Ladai
+var combat_enabled: bool = false   # Level 2 me chalu hoti hai
+var health: float = 100.0
+var dead: bool = false
+var attack_cooldown: float = 0.0
 var joy_base: Panel
 var joy_knob: Panel
 
@@ -45,6 +60,7 @@ func _ready() -> void:
 	joy_default_center = Vector2(240, touch_screen_size.y - 430)
 	move_joystick_center = joy_default_center
 	game_manager = get_node_or_null("../GameManager")
+	add_to_group("player")
 
 	# Tumhari footstep file (audio/footstep, koi bhi mp3/ogg/wav). Na mile to code wali awaaz.
 	step_player = AudioStreamPlayer.new()
@@ -86,6 +102,7 @@ func _ready() -> void:
 	spot_light.shadow_enabled = true
 	camera.add_child(spot_light)
 
+	build_fp_sword()
 	setup_touch_ui()
 
 func play_sfx(sfx_name: String) -> void:
@@ -121,6 +138,52 @@ func setup_touch_ui() -> void:
 	joy_knob = make_circle(90.0, Color(1, 1, 1, 0.35))
 	canvas.add_child(joy_base)
 	canvas.add_child(joy_knob)
+
+	# Talwar ka hamla button (bada, anguthe ki pahunch me)
+	attack_btn = Button.new()
+	attack_btn.custom_minimum_size = Vector2(150, 150)
+	attack_btn.size = Vector2(150, 150)
+	attack_btn.position = Vector2(w - 260, h - 600)
+	attack_btn.focus_mode = Control.FOCUS_NONE
+	attack_btn.text = "ATTACK"
+	attack_btn.add_theme_font_size_override("font_size", 22)
+	var atk_style := StyleBoxFlat.new()
+	atk_style.bg_color = Color(0.8, 0.1, 0.1, 0.4)
+	atk_style.border_color = Color(1.0, 0.4, 0.3, 0.9)
+	atk_style.set_border_width_all(3)
+	atk_style.set_corner_radius_all(75)
+	for state in ["normal", "hover", "pressed", "focus"]:
+		attack_btn.add_theme_stylebox_override(state, atk_style)
+	attack_btn.button_down.connect(attack)
+	attack_btn.visible = false
+	canvas.add_child(attack_btn)
+
+	# Health bar (upar bayein)
+	health_bar = ProgressBar.new()
+	health_bar.min_value = 0.0
+	health_bar.max_value = 100.0
+	health_bar.value = 100.0
+	health_bar.show_percentage = false
+	health_bar.size = Vector2(360, 22)
+	health_bar.position = Vector2(40, 70)
+	var hb_bg := StyleBoxFlat.new()
+	hb_bg.bg_color = Color(0, 0, 0, 0.5)
+	hb_bg.set_corner_radius_all(11)
+	var hb_fill := StyleBoxFlat.new()
+	hb_fill.bg_color = Color(0.8, 0.1, 0.1, 0.95)
+	hb_fill.set_corner_radius_all(11)
+	health_bar.add_theme_stylebox_override("background", hb_bg)
+	health_bar.add_theme_stylebox_override("fill", hb_fill)
+	health_bar.visible = false
+	canvas.add_child(health_bar)
+
+	# Chot lagne par laal chamak
+	damage_flash = ColorRect.new()
+	damage_flash.color = Color(0.7, 0.0, 0.0, 0.0)
+	damage_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	damage_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	canvas.add_child(damage_flash)
+	canvas.move_child(damage_flash, 0)
 
 func make_circle(diameter: float, color: Color) -> Panel:
 	var p := Panel.new()
@@ -187,6 +250,8 @@ func _input(event: InputEvent) -> void:
 		if event.pressed:
 			if torch_btn.get_global_rect().has_point(event.position):
 				return
+			if attack_btn.visible and attack_btn.get_global_rect().has_point(event.position):
+				return
 			if is_move_zone(event.position):
 				if move_touch_index == -1:
 					move_touch_index = event.index
@@ -225,6 +290,7 @@ func _input(event: InputEvent) -> void:
 
 # ---------------- Movement ----------------
 func _physics_process(delta: float) -> void:
+	attack_cooldown = maxf(0.0, attack_cooldown - delta)
 	if not is_on_floor():
 		velocity.y -= 20.0 * delta
 
@@ -294,6 +360,105 @@ func pause_step_loop() -> void:
 func _on_step_finished() -> void:
 	if step_loop_active:
 		step_player.play()
+
+# ---------------- Ladai (Level 2 se) ----------------
+func set_combat_enabled(on: bool) -> void:
+	combat_enabled = on
+	attack_btn.visible = on
+	health_bar.visible = on
+	sword_pivot.visible = on
+
+func play_any(base: String, fallback: String, volume_db: float = 0.0) -> void:
+	if game_manager and game_manager.has_method("play_any"):
+		game_manager.play_any(base, fallback, volume_db)
+
+# Pahle-person talwar (camera ke saath)
+func build_fp_sword() -> void:
+	sword_pivot = Node3D.new()
+	sword_pivot.position = Vector3(0.38, -0.38, -0.7)
+	sword_pivot.rotation_degrees = Vector3(-35, 12, -20)
+	sword_pivot.visible = false
+	camera.add_child(sword_pivot)
+
+	var steel := StandardMaterial3D.new()
+	steel.albedo_color = Color(0.8, 0.84, 0.9)
+	steel.roughness = 0.3
+	steel.emission_enabled = true
+	steel.emission = Color(0.3, 0.35, 0.42)
+	steel.emission_energy_multiplier = 0.8
+	var brass := StandardMaterial3D.new()
+	brass.albedo_color = Color(0.75, 0.55, 0.2)
+	brass.roughness = 0.5
+
+	sword_pivot.add_child(sword_piece(Vector3(0.06, 0.85, 0.015), Vector3(0, 0.55, 0), steel))   # phal
+	sword_pivot.add_child(sword_piece(Vector3(0.28, 0.05, 0.05), Vector3(0, 0.12, 0), brass))    # guard
+	sword_pivot.add_child(sword_piece(Vector3(0.045, 0.2, 0.045), Vector3(0, -0.02, 0), brass))  # mooth
+
+func sword_piece(size: Vector3, pos: Vector3, material: Material) -> MeshInstance3D:
+	var box := BoxMesh.new()
+	box.size = size
+	var mi := MeshInstance3D.new()
+	mi.mesh = box
+	mi.material_override = material
+	mi.position = pos
+	return mi
+
+func swing_sword() -> void:
+	if sword_tween:
+		sword_tween.kill()
+	sword_tween = create_tween()
+	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-95, -55, 75), 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.05, -0.3, -0.85), 0.12)
+	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-35, 12, -20), 0.3)
+	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.38, -0.38, -0.7), 0.3)
+
+func attack() -> void:
+	if not combat_enabled or dead or attack_cooldown > 0.0:
+		return
+	attack_cooldown = SWORD_COOLDOWN
+	swing_sword()
+	play_any("res://audio/sword_swing", "slash", -2.0)
+	await get_tree().create_timer(0.14).timeout
+	apply_sword_hits()
+
+func apply_sword_hits() -> void:
+	var fwd: Vector3 = -global_transform.basis.z
+	fwd.y = 0.0
+	fwd = fwd.normalized()
+	var hit_any: bool = false
+	for e in get_tree().get_nodes_in_group("enemy"):
+		if e.has_method("is_dead") and e.is_dead():
+			continue
+		var d: Vector3 = e.global_position - global_position
+		d.y = 0.0
+		var dist: float = d.length()
+		if dist > 0.01 and dist <= SWORD_RANGE and fwd.dot(d / dist) > 0.35:
+			e.take_hit(1, global_position)
+			hit_any = true
+	if hit_any:
+		play_any("res://audio/sword_hit", "hit")
+
+func take_damage(amount: float, from_pos: Vector3) -> void:
+	if dead or not combat_enabled:
+		return
+	health = maxf(0.0, health - amount)
+	health_bar.value = health
+	damage_flash.color = Color(0.7, 0.0, 0.0, 0.5)
+	create_tween().tween_property(damage_flash, "color:a", 0.0, 0.6)
+	var away: Vector3 = global_position - from_pos
+	away.y = 0.0
+	if away.length() > 0.01:
+		velocity += away.normalized() * 5.0
+	if health <= 0.0:
+		dead = true
+		died.emit()
+
+func respawn_at(pos: Vector3) -> void:
+	dead = false
+	health = 100.0
+	health_bar.value = 100.0
+	global_position = pos
+	velocity = Vector3.ZERO
 
 # Deewar ke bilkul paas torch ki roshni dheemi, taaki screen safed na ho jaye
 func update_torch_energy() -> void:

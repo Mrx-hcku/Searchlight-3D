@@ -1,6 +1,6 @@
 extends Node3D
 # Level 2: Parchhaiyon ka maidan
-# Chaar masal jagao, Chhaya (parchhai) ko roshni se bhagao, phir Mahadev (Nataraj) ka dwar khulta hai.
+# 6 yoddha (talwar wale) pehra dete hain. Chaar masal jagao (har masal par ujala badhta hai), phir Mahadev (Nataraj) ka dwar khulta hai.
 # Level 1 ki script ise darwaze ke bahar nikalne par apne aap banati hai (Main.tscn badalne ki zarurat nahi).
 
 const PORTAL_SHADER: String = """
@@ -53,11 +53,6 @@ const STATUE_POS: Vector3 = Vector3(231.0, 0.0, 0.0)
 var masal_beam_angle: float = 12.0     # masal par kiran kitni seedhi
 var masal_range: float = 45.0
 var masal_charge_time: float = 1.5     # masal par kitni der kiran tikani hai
-var shadow_beam_angle: float = 20.0
-var shadow_range: float = 32.0
-var shadow_dissolve_time: float = 1.2  # Chhaya par kitni der roshni chahiye
-var shadow_speed: float = 2.6
-var spawn_interval: float = 5.5
 
 var masal_positions: Array[Vector3] = [
 	Vector3(128.0, 0.0, -46.0), Vector3(128.0, 0.0, 46.0),
@@ -72,28 +67,19 @@ class Masal:
 	var charge: float = 0.0
 	var lit: bool = false
 
-class Shadow:
-	var node: Node3D
-	var mat: StandardMaterial3D
-	var dissolve: float = 0.0
-	var phase: float = 0.0
-	var dying: bool = false
-
 var player
 var game_manager_node: Node
 var magical_node: Node
 var rng := RandomNumberGenerator.new()
 
 var masals: Array[Masal] = []
-var shadows: Array[Shadow] = []
+var warriors: Array = []
 var lit_count: int = 0
 var active: bool = false
 var complete: bool = false          # chaaron masal jal gayi
 var statue_revealed: bool = false
 var portal_open: bool = false
 var finished: bool = false
-var spawn_timer: float = 0.0
-var hit_cooldown: float = 0.0
 var portal_age: float = 0.0
 
 var statue_root: Node3D
@@ -127,7 +113,11 @@ func activate() -> void:
 	active = true
 	hud_label.visible = true
 	update_hud()
-	spawn_timer = spawn_interval - 2.0
+	if player.has_method("set_combat_enabled"):
+		player.set_combat_enabled(true)
+	if player.has_signal("died") and not player.died.is_connected(_on_player_died):
+		player.died.connect(_on_player_died)
+	spawn_warriors()
 
 # ---------------- Helpers ----------------
 func sfx(sfx_name: String, volume_db: float = 0.0) -> void:
@@ -433,7 +423,7 @@ func shape_part(capsule: CapsuleMesh, material: Material, pos: Vector3, rot_deg:
 # models/nataraj.glb (ya .gltf) ho to placeholder ki jagah wahi lagao (7 meter ooncha)
 func try_statue_model(placeholder: Node3D) -> void:
 	var path: String = ""
-	for ext in ["glb", "gltf", "GLB", "GLTF"]:
+	for ext in ["glb", "gltf", "fbx", "GLB", "GLTF", "FBX"]:
 		var p: String = "res://models/nataraj." + ext
 		if ResourceLoader.exists(p):
 			path = p
@@ -574,7 +564,6 @@ func _on_tandav_finished() -> void:
 func _physics_process(delta: float) -> void:
 	if player == null or player.camera == null:
 		return
-	hit_cooldown = maxf(0.0, hit_cooldown - delta)
 
 	if active and not complete:
 		var cam: Camera3D = player.camera
@@ -583,8 +572,6 @@ func _physics_process(delta: float) -> void:
 		var space := get_world_3d().direct_space_state
 		var torch_on: bool = player.is_torch_on
 		update_masals(delta, origin, forward, space, torch_on)
-		update_shadows(delta, origin, forward, space, torch_on)
-		update_spawning(delta)
 
 	if statue_revealed:
 		update_statue_and_portal(delta)
@@ -621,8 +608,13 @@ func ignite(m: Masal) -> void:
 	m.lit = true
 	lit_count += 1
 	m.fire.emitting = true
-	m.light.light_energy = 3.5
+	m.light.light_energy = 5.0
+	m.light.omni_range = 40.0
 	m.ember_mat.emission_energy_multiplier = 6.0
+	# Har masal jalne par andhera kam hota jata hai
+	var wg := get_node_or_null("../WorldGenerator")
+	if wg and wg.has_method("set_daylight"):
+		wg.set_daylight(float(lit_count) / float(masals.size()))
 	sfx("rune")
 	update_hud()
 	if lit_count >= masals.size():
@@ -635,8 +627,6 @@ func on_all_lit() -> void:
 	toast("चारों मशालें जल उठीं... महादेव का द्वार प्रकट हो रहा है")
 	sfx("complete")
 	sfx("door", -4.0)
-	for s in shadows.duplicate():
-		kill_shadow(s)
 	reveal_statue()
 
 func reveal_statue() -> void:
@@ -648,127 +638,39 @@ func reveal_statue() -> void:
 	t.tween_property(waterfall_mat, "shader_parameter/glow", 1.0, 4.0)
 	t.tween_property(statue_light, "light_energy", 2.5, 3.0)
 
-# --- Chhaya (parchhai) ---
-func spawn_shadow(pos: Vector3) -> void:
-	var s := Shadow.new()
-	s.phase = rng.randf() * TAU
-
-	var root := Node3D.new()
-	root.position = pos
-	add_child(root)
-
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.02, 0.0, 0.05, 0.92)
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.roughness = 1.0
-	mat.emission_enabled = true
-	mat.emission = Color(0.35, 0.08, 0.7)
-	mat.emission_energy_multiplier = 0.7
-
-	var cone := CylinderMesh.new()
-	cone.top_radius = 0.25
-	cone.bottom_radius = 0.9
-	cone.height = 2.6
-	cone.radial_segments = 12
-	root.add_child(part_of(cone, mat, Vector3(0, 1.3, 0), Vector3.ZERO))
-
-	var head := SphereMesh.new()
-	head.radius = 0.38
-	head.height = 0.76
-	head.radial_segments = 10
-	head.rings = 5
-	root.add_child(part_of(head, mat, Vector3(0, 2.75, 0), Vector3.ZERO))
-
-	# Chamakti aankhein (andhere me door se dikhti hain)
-	var eye_mat := StandardMaterial3D.new()
-	eye_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	eye_mat.albedo_color = Color(0.8, 1.0, 1.0)
-	for side in [-1.0, 1.0]:
-		var eye := SphereMesh.new()
-		eye.radius = 0.09
-		eye.height = 0.18
-		eye.radial_segments = 8
-		eye.rings = 4
-		root.add_child(part_of(eye, eye_mat, Vector3(0.16 * side, 2.8, -0.32), Vector3.ZERO))
-
-	root.add_child(make_particles(Vector3(0, 1.0, 0), 10, 1.6, 0.22, Color(0.5, 0.15, 0.9, 0.5), Color(0.2, 0.0, 0.4, 0.0), 0.2, 0.7, Vector3(0.5, 0.6, 0.5), 40.0))
-
-	s.node = root
-	s.mat = mat
-	shadows.append(s)
-
-func update_shadows(delta: float, origin: Vector3, forward: Vector3, space: PhysicsDirectSpaceState3D, torch_on: bool) -> void:
-	var ppos: Vector3 = player.global_position
-	var now: float = Time.get_ticks_msec() / 1000.0
-	for s in shadows.duplicate():
-		if s.dying:
-			continue
-		var n: Node3D = s.node
-		var gp: Vector3 = n.global_position
-		var flat := Vector3(ppos.x - gp.x, 0.0, ppos.z - gp.z)
-		var dist: float = flat.length()
-
-		var lit: bool = torch_on and beam_hits(gp + Vector3(0, 1.4, 0), shadow_beam_angle, shadow_range, origin, forward, space)
-		var speed: float = shadow_speed * (0.3 if lit else 1.0)
-		if dist > 0.1:
-			n.global_position += flat.normalized() * speed * delta
-			n.look_at(Vector3(ppos.x, n.global_position.y, ppos.z), Vector3.UP)
-		n.position.y = 0.15 * sin(now * 2.0 + s.phase)
-
-		if lit:
-			s.dissolve += delta
-		else:
-			s.dissolve = maxf(0.0, s.dissolve - delta * 0.8)
-		var t: float = clampf(s.dissolve / shadow_dissolve_time, 0.0, 1.0)
-		s.mat.emission_energy_multiplier = lerpf(0.7, 4.0, t)
-		n.scale = Vector3.ONE * lerpf(1.0, 0.75, t)
-
-		if s.dissolve >= shadow_dissolve_time:
-			kill_shadow(s)
-			continue
-		if dist < 1.3 and hit_cooldown <= 0.0:
-			hit_player(flat.normalized())
-			kill_shadow(s)
-
-func kill_shadow(s: Shadow) -> void:
-	if s.dying:
+# --- Yoddha (talwar wale pehredaar) ---
+func spawn_warriors() -> void:
+	var warrior_script := load("res://warrior.gd") as Script
+	if warrior_script == null:
 		return
-	s.dying = true
-	shadows.erase(s)
-	sfx("scroll", -8.0)
-	var tw := create_tween()
-	tw.tween_property(s.node, "scale", Vector3.ONE * 0.01, 0.3)
-	tw.tween_callback(s.node.queue_free)
+	# 4 masalon ke paas ek-ek, 2 murti ke paas
+	var posts: Array[Vector3] = [
+		Vector3(134.0, 0.0, -38.0), Vector3(134.0, 0.0, 38.0),
+		Vector3(199.0, 0.0, -38.0), Vector3(199.0, 0.0, 38.0),
+		Vector3(221.0, 0.0, -7.0), Vector3(221.0, 0.0, 7.0)
+	]
+	for pos in posts:
+		var w := CharacterBody3D.new()
+		w.set_script(warrior_script)
+		w.set("player", player)
+		w.set("game_manager", game_manager_node)
+		w.set("home", pos)
+		w.position = pos + Vector3(0.0, 0.1, 0.0)
+		add_child(w)
+		warriors.append(w)
 
-func hit_player(push_dir: Vector3) -> void:
-	hit_cooldown = 1.2
-	player.velocity += push_dir * 12.0 + Vector3(0, 2.0, 0)
-	hit_overlay.color = Color(0, 0, 0, 0.85)
-	create_tween().tween_property(hit_overlay, "color:a", 0.0, 0.9)
-	sfx("hit")
-	toast("परछाईं ने छू लिया! रोशनी डालो")
-
-func update_spawning(delta: float) -> void:
-	if lit_count >= masals.size():
-		return
-	if magical_node and magical_node.is_scroll_open:
-		return # card khula ho to nayi Chhaya nahi aayegi
-	var p: Vector3 = player.global_position
-	if p.x < FIELD_MIN_X + 3.0:
-		return
-	spawn_timer += delta
-	var max_alive: int = mini(3 + lit_count, 6)
-	if spawn_timer < spawn_interval or shadows.size() >= max_alive:
-		return
-	spawn_timer = 0.0
-	var ang: float = rng.randf() * TAU
-	var r: float = rng.randf_range(26.0, 34.0)
-	var pos := Vector3(p.x + cos(ang) * r, 0.0, p.z + sin(ang) * r)
-	pos.x = clampf(pos.x, FIELD_MIN_X + 6.0, FIELD_MAX_X - 6.0)
-	pos.z = clampf(pos.z, -FIELD_HALF_Z + 6.0, FIELD_HALF_Z - 6.0)
-	if Vector2(pos.x - p.x, pos.z - p.z).length() < 16.0:
-		return
-	spawn_shadow(pos)
+# Khilaadi gir jaye to maidan ke pravesh par uthta hai, bache hue yoddha apni jagah laut jate hain
+func _on_player_died() -> void:
+	toast("तुम गिर गए... फिर उठो")
+	var t := create_tween()
+	t.tween_property(hit_overlay, "color:a", 1.0, 0.7)
+	await t.finished
+	player.respawn_at(Vector3(110.0, 0.5, 0.0))
+	for w in warriors:
+		if is_instance_valid(w) and w.has_method("reset_to_home"):
+			w.reset_to_home()
+	await get_tree().create_timer(0.5).timeout
+	create_tween().tween_property(hit_overlay, "color:a", 0.0, 0.8)
 
 # --- Murti, Tandav aur portal ---
 func update_statue_and_portal(delta: float) -> void:

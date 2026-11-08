@@ -75,7 +75,7 @@ func sfx(sfx_name: String) -> void:
 # ---------- Maze ----------
 func generate_dark_maze() -> void:
 	var wall_material := StandardMaterial3D.new()
-	wall_material.albedo_color = Color(0.16, 0.16, 0.22)
+	wall_material.albedo_color = Color(0.24, 0.24, 0.32)
 	wall_material.roughness = 0.95
 
 	var exit_cell := Vector2i(maze_size.x - 1, int(maze_size.y / 2.0))
