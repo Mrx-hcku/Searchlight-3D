@@ -2,13 +2,15 @@ extends Node3D
 
 @export var world_size: int = 50
 
+var env: Environment
+
 func _ready() -> void:
 	setup_environment()
 	generate_procedural_environment()
 
 # Halki ambient roshni taaki andhere me bhi aas-paas thoda dikhe
 func setup_environment() -> void:
-	var env := Environment.new()
+	env = Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.02, 0.02, 0.05)
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
@@ -80,3 +82,19 @@ func generate_procedural_environment() -> void:
 		add_child(p_pillar)
 
 	print("Procedural Dark Environment & Structures Generated Successfully.")
+
+# Darwaze ke bahar nikalte hi duniya jaadui ho jaati hai (level script isse bulati hai)
+func enter_magical_world() -> void:
+	if env == null:
+		return
+	env.glow_enabled = true
+	env.glow_intensity = 0.8
+	env.glow_bloom = 0.1
+
+	var t := create_tween().set_parallel(true)
+	t.tween_property(env, "background_color", Color(0.07, 0.03, 0.16), 4.0)
+	t.tween_property(env, "ambient_light_color", Color(0.55, 0.50, 0.95), 4.0)
+	t.tween_property(env, "ambient_light_energy", 1.7, 4.0)
+	var moon := get_node_or_null("../DirectionalLight3D") as DirectionalLight3D
+	if moon:
+		t.tween_property(moon, "light_color", Color(0.60, 0.45, 0.95), 4.0)

@@ -23,6 +23,11 @@ var move_input: Vector2 = Vector2.ZERO   # raw, length 0..1
 
 var is_torch_on: bool = true
 var step_timer: float = 0.0
+var step_player: AudioStreamPlayer
+var step_stream: AudioStream
+var step_is_loop: bool = false
+var step_loop_active: bool = false
+var _step_tween: Tween
 
 var torch_btn: Button
 var joy_base: Panel
@@ -33,6 +38,22 @@ func _ready() -> void:
 	joy_default_center = Vector2(240, touch_screen_size.y - 430)
 	move_joystick_center = joy_default_center
 	game_manager = get_node_or_null("../GameManager")
+
+	# Tumhari footstep file (audio/footstep, koi bhi mp3/ogg/wav). Na mile to code wali awaaz.
+	step_player = AudioStreamPlayer.new()
+	add_child(step_player)
+	if game_manager and game_manager.has_method("load_audio"):
+		step_stream = game_manager.load_audio("res://audio/footstep")
+	if step_stream:
+		step_player.stream = step_stream
+		step_player.volume_db = -2.0
+		# 1.2 second se lambi file = chalne ki loop, chhoti = ek kadam
+		step_is_loop = step_stream.get_length() > 1.2
+		if step_is_loop:
+			# mp3/ogg ko seedha loop par rakho, baaki (wav) khatam hone par dobara bajegi
+			if step_stream is AudioStreamMP3 or step_stream is AudioStreamOggVorbis:
+				step_stream.set("loop", true)
+			step_player.finished.connect(_on_step_finished)
 
 	# Collision
 	var col := CollisionShape3D.new()
@@ -202,13 +223,56 @@ func _physics_process(delta: float) -> void:
 
 	# Footsteps
 	var moving: bool = Vector2(velocity.x, velocity.z).length() > 1.0 and is_on_floor()
-	if moving:
-		step_timer += delta
-		if step_timer >= 0.42:
-			step_timer = 0.0
-			play_sfx("step")
+	if step_stream == null:
+		if moving:
+			step_timer += delta
+			if step_timer >= 0.42:
+				step_timer = 0.0
+				play_sfx("step")
+		else:
+			step_timer = 0.3
+	elif step_is_loop:
+		if moving and not step_loop_active:
+			step_loop_active = true
+			start_step_loop()
+		elif not moving and step_loop_active:
+			step_loop_active = false
+			stop_step_loop()
 	else:
-		step_timer = 0.3
+		if moving:
+			step_timer += delta
+			if step_timer >= 0.42:
+				step_timer = 0.0
+				step_player.play()
+		else:
+			step_timer = 0.3
+
+# Lambi walking-loop: chalte hi dheere se shuru, rukte hi dheere se band (wahin se aage chalegi)
+func start_step_loop() -> void:
+	if _step_tween:
+		_step_tween.kill()
+	if not step_player.playing:
+		step_player.volume_db = -30.0
+		step_player.play()
+	step_player.stream_paused = false
+	_step_tween = create_tween()
+	_step_tween.tween_property(step_player, "volume_db", -2.0, 0.12)
+
+func stop_step_loop() -> void:
+	if not step_player.playing or step_player.stream_paused:
+		return
+	if _step_tween:
+		_step_tween.kill()
+	_step_tween = create_tween()
+	_step_tween.tween_property(step_player, "volume_db", -40.0, 0.15)
+	_step_tween.tween_callback(pause_step_loop)
+
+func pause_step_loop() -> void:
+	step_player.stream_paused = true
+
+func _on_step_finished() -> void:
+	if step_loop_active:
+		step_player.play()
 
 # Deewar ke bilkul paas torch ki roshni dheemi, taaki screen safed na ho jaye
 func update_torch_energy() -> void:

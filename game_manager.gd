@@ -58,6 +58,35 @@ func play_sfx(sfx_name: String, volume_db: float = 0.0) -> void:
 			p.play()
 			return
 
+# Koi bhi extension chalegi (mp3 / ogg / wav). File nahi mili to bina error ke null.
+# base: "res://audio/door_open_sfx" (extension likhna zaruri nahi)
+const AUDIO_EXTS: Array[String] = ["mp3", "ogg", "wav", "MP3", "OGG", "WAV"]
+
+func load_audio(base: String) -> AudioStream:
+	var b: String = base
+	if base.get_extension() != "":
+		b = base.get_basename()
+	for e in AUDIO_EXTS:
+		var p: String = b + "." + e
+		if ResourceLoader.exists(p):
+			var res = load(p)
+			if res is AudioStream:
+				return res
+	return null
+
+# User ki apni sound file bajao. File mili to true, nahi to false.
+func play_file(base: String, volume_db: float = 0.0) -> bool:
+	var stream: AudioStream = load_audio(base)
+	if stream == null:
+		return false
+	for p in sfx_players:
+		if not p.playing:
+			p.stream = stream
+			p.volume_db = volume_db
+			p.play()
+			return true
+	return false
+
 func build_sfx() -> void:
 	for i in range(6):
 		var p := AudioStreamPlayer.new()
@@ -71,6 +100,7 @@ func build_sfx() -> void:
 	sfx["scroll"] = make_wav(whoosh(0.7))
 	sfx["door"] = make_wav(rumble(2.2))
 	sfx["whisper"] = make_wav(whisper(3.0))
+	sfx["creak"] = make_wav(creak(2.2))
 
 func make_wav(samples: PackedFloat32Array) -> AudioStreamWAV:
 	var data := PackedByteArray()
@@ -161,4 +191,20 @@ func whisper(dur: float) -> PackedFloat32Array:
 		var syll: float = clampf(sin(TAU * 3.1 * t + sin(TAU * 0.7 * t) * 2.0), 0.0, 1.0)
 		var fade: float = sin(PI * t / dur)
 		out[i] = breath * syll * fade * 0.5
+	return out
+
+# Purane lakdi/loha ke darwaze ki chargharahat
+func creak(dur: float) -> PackedFloat32Array:
+	var n := int(dur * MIX_RATE)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var phase := 0.0
+	for i in range(n):
+		var t: float = i / MIX_RATE
+		var k: float = t / dur
+		var f: float = lerpf(210.0, 120.0, k) + sin(TAU * 7.0 * t) * 18.0 + rng.randf_range(-6.0, 6.0)
+		phase = fposmod(phase + TAU * f / MIX_RATE, TAU)
+		var saw: float = (phase / PI) - 1.0
+		var env: float = sin(PI * k)
+		out[i] = (saw * 0.35 + sin(phase * 2.0) * 0.15) * env * 0.6
 	return out
