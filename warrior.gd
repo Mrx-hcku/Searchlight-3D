@@ -1,6 +1,5 @@
 extends CharacterBody3D
 # Yoddha: talwar wala dushman. Level 2 me 6 baar copy hota hai, aage ke levels me bhi isi script se naye yoddha bana sakte ho.
-# models/warrior.glb (ya .gltf / .fbx) ho to wahi dikhega, warna code se bana placeholder yoddha.
 
 signal died(warrior)
 
@@ -8,7 +7,6 @@ enum State { GUARD, CHASE, WINDUP, STRIKE, RECOVER, HURT, DEAD }
 
 const MODEL_YAW: float = 180.0        # zyadatar models +Z dekhte hain. Ulta dikhe to 0.0 kar do
 const MODEL_HEIGHT: float = 1.9
-const ADD_SWORD_TO_MODEL: bool = true # model ke paas apni talwar ho to false kar do
 
 var max_health: int = 4
 var health: int = 4
@@ -110,8 +108,7 @@ func try_model() -> bool:
 				if a:
 					a.loop_mode = Animation.LOOP_LINEAR
 
-	if ADD_SWORD_TO_MODEL:
-		attach_sword_to_hand(model)
+	attach_external_sword_to_hand(model)
 	return true
 
 func classify_anim(anim_name: String) -> String:
@@ -146,8 +143,8 @@ func model_aabb(root: Node3D) -> AABB:
 			result = result.merge(b)
 	return result
 
-# Dayein haath ki haddi par talwar lagao (model ke paas talwar na ho to)
-func attach_sword_to_hand(model: Node) -> void:
+# External Sword.fbx file ko right hand bone par attach karne ke liye
+func attach_external_sword_to_hand(model: Node) -> void:
 	var skels: Array[Node] = model.find_children("*", "Skeleton3D", true, false)
 	if skels.is_empty():
 		return
@@ -165,46 +162,41 @@ func attach_sword_to_hand(model: Node) -> void:
 			break
 	if bone_name == "":
 		return
+
+	# Sword ki 3D file load karein
+	var sword_path: String = "res://models/sword.fbx" # Agar katana karni ho toh yahan "katana.fbx" kar sakte hain
+	if not ResourceLoader.exists(sword_path):
+		# Agar lowercase me na mile to extensions check kar lo
+		for ext in ["fbx", "FBX", "glb", "GLB"]:
+			var p = "res://models/sword." + ext
+			if ResourceLoader.exists(p):
+				sword_path = p
+				break
+	
+	if not ResourceLoader.exists(sword_path):
+		return
+
+	var sword_scene := load(sword_path) as PackedScene
+	if sword_scene == null:
+		return
+	var sword_node := sword_scene.instantiate() as Node3D
+	if sword_node == null:
+		return
+
 	var ba := BoneAttachment3D.new()
 	ba.bone_name = bone_name
 	skel.add_child(ba)
-	var sword: Node3D = build_sword()
-	ba.add_child(sword)
+	ba.add_child(sword_node)
+	
+	# Scale adjust karne ke liye agar zaroorat pade
 	var sc: float = skel.global_transform.basis.get_scale().x
 	if sc > 0.0001:
-		sword.scale = Vector3.ONE / sc
+		sword_node.scale = Vector3.ONE / sc
 
-# ---------------- Sword (talwar) ----------------
-func build_sword() -> Node3D:
-	var root := Node3D.new()
-	var steel := StandardMaterial3D.new()
-	steel.albedo_color = Color(0.78, 0.82, 0.88)
-	steel.roughness = 0.3
-	steel.emission_enabled = true
-	steel.emission = Color(0.3, 0.35, 0.42)
-	steel.emission_energy_multiplier = 0.6
-	var brass := StandardMaterial3D.new()
-	brass.albedo_color = Color(0.7, 0.5, 0.15)
-	brass.roughness = 0.5
-
-	root.add_child(part(BoxMesh.new(), steel, Vector3(0, 0.6, 0), Vector3(0.07, 1.0, 0.018)))   # phal
-	root.add_child(part(BoxMesh.new(), brass, Vector3(0, 0.1, 0), Vector3(0.3, 0.05, 0.06)))    # guard
-	root.add_child(part(BoxMesh.new(), brass, Vector3(0, -0.04, 0), Vector3(0.05, 0.2, 0.05)))  # mooth
-	return root
-
-func part(mesh: Mesh, material: Material, pos: Vector3, size: Vector3) -> MeshInstance3D:
-	if mesh is BoxMesh:
-		(mesh as BoxMesh).size = size
-	var mi := MeshInstance3D.new()
-	mi.mesh = mesh
-	mi.material_override = material
-	mi.position = pos
-	return mi
-
-# ---------------- Placeholder yoddha (code se bana) ----------------
+# ---------------- Placeholder yoddha (agar model na mile) ----------------
 func build_placeholder() -> void:
 	var skin := StandardMaterial3D.new()
-	skin.albedo_color = Color(0.62, 0.56, 0.52)   # rakh jaisa rang
+	skin.albedo_color = Color(0.62, 0.56, 0.52)
 	skin.roughness = 0.9
 	var cloth := StandardMaterial3D.new()
 	cloth.albedo_color = Color(0.40, 0.06, 0.06)
@@ -239,12 +231,6 @@ func build_placeholder() -> void:
 	arm_l = limb(Vector3(-0.42, 1.75, 0), skin, 0.09, 0.75, 0.37)
 	arm_r = limb(Vector3(0.42, 1.75, 0), skin, 0.09, 0.75, 0.37)
 	arm_r.rotation.x = -0.55
-
-	# Talwar dayein haath me (phal haath ke saath aage ki taraf)
-	var sword: Node3D = build_sword()
-	sword.position = Vector3(0, -0.75, 0)
-	sword.rotation_degrees = Vector3(-90, 0, 0)
-	arm_r.add_child(sword)
 
 func limb(pivot_pos: Vector3, material: Material, radius: float, length: float, down: float) -> Node3D:
 	var pivot := Node3D.new()
@@ -298,24 +284,12 @@ func animate(delta: float) -> void:
 				play_anim("idle")
 		return
 
-	# Placeholder: code se chalna aur talwar ghumana
 	walk_phase += speed * delta * 2.4
 	var amp: float = clampf(speed / 3.0, 0.0, 1.0)
 	leg_l.rotation.x = sin(walk_phase) * 0.7 * amp
 	leg_r.rotation.x = -sin(walk_phase) * 0.7 * amp
 	arm_l.rotation.x = -sin(walk_phase) * 0.5 * amp
-
-	var arm_target: float = -0.55
-	match state:
-		State.WINDUP:
-			arm_target = lerpf(-0.55, -2.9, clampf(state_time / windup_time, 0.0, 1.0))
-		State.STRIKE:
-			arm_target = lerpf(-2.9, -0.15, clampf(state_time / strike_time, 0.0, 1.0))
-		State.RECOVER:
-			arm_target = lerpf(-0.15, -0.55, clampf(state_time / recover_time, 0.0, 1.0))
-	arm_r.rotation.x = arm_target
 	visual.rotation.x = -0.25 if state == State.HURT else 0.0
-	visual.position.y = absf(sin(walk_phase)) * 0.05 * amp
 
 # ---------------- AI ----------------
 func _set_state(s: State) -> void:
@@ -452,9 +426,8 @@ func die(away: Vector3) -> void:
 		return
 	var fade := create_tween()
 	fade.tween_property(visual, "scale", Vector3.ONE * 0.01, 1.0)
-	fade.tween_callback(queue_free)
+.	fade.tween_callback(queue_free)
 
-# Level 2 me khilaadi ke girne par yoddha apni jagah laut jate hain
 func reset_to_home() -> void:
 	if state == State.DEAD:
 		return
@@ -513,7 +486,6 @@ func get_splat_texture() -> GradientTexture2D:
 		splat_texture = t
 	return splat_texture
 
-# Zameen par khoon ka dhabba (dheere phailta hai, ~30 second baad gayab)
 func spawn_splat(pos: Vector3, size: float, grow: bool) -> void:
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = get_splat_texture()
