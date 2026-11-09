@@ -6,7 +6,7 @@ signal died
 @export var max_speed: float = 5.5
 @export var accel: float = 45.0              # jitna zyada, utna turant response
 @export var look_sensitivity: float = 0.0055 # radian per pixel: right zone (540px) ka ek swipe ~170 degree
-@export var base_torch_energy: float = 14.0
+@export var base_torch_energy: float = 9.0
 
 const JOY_RADIUS: float = 110.0   # joystick ka radius (1080 wide screen ke hisaab se)
 const JOY_DEADZONE: float = 0.10
@@ -16,6 +16,9 @@ const LOOK_Y_SCALE: float = 0.75   # upar-neeche thoda dheema, taaki camera bhat
 const LOOK_PITCH_LIMIT: float = 75.0
 const SWORD_RANGE: float = 3.0      # talwar kitni door tak lagti hai (meter)
 const SWORD_COOLDOWN: float = 0.6
+const FOV_BASE: float = 88.0         # portrait screen par chauda nazaara
+const SPRINT_MULT: float = 1.6
+const FOV_SPRINT: float = 8.0
 
 var camera: Camera3D
 var spot_light: SpotLight3D
@@ -42,6 +45,9 @@ var _step_tween: Tween
 
 var torch_btn: Button
 var attack_btn: Button
+var sprint_btn: Button
+var sprint_on: bool = false
+var step_interval: float = 0.42
 var health_bar: ProgressBar
 var damage_flash: ColorRect
 var sword_pivot: Node3D
@@ -91,6 +97,7 @@ func _ready() -> void:
 	camera = Camera3D.new()
 	camera.position = Vector3(0, 1.7, 0)
 	camera.near = 0.08
+	camera.fov = FOV_BASE
 	add_child(camera)
 
 	# Searchlight torch
@@ -158,6 +165,17 @@ func setup_touch_ui() -> void:
 	attack_btn.visible = false
 	canvas.add_child(attack_btn)
 
+	# Daudne (RUN) ka button: dabao to tez, dobara dabao ya joystick chhodo to band
+	sprint_btn = Button.new()
+	sprint_btn.custom_minimum_size = Vector2(120, 120)
+	sprint_btn.size = Vector2(120, 120)
+	sprint_btn.position = Vector2(60, h - 680)
+	sprint_btn.focus_mode = Control.FOCUS_NONE
+	sprint_btn.add_theme_font_size_override("font_size", 24)
+	sprint_btn.button_down.connect(toggle_sprint)
+	canvas.add_child(sprint_btn)
+	update_sprint_button()
+
 	# Health bar (upar bayein)
 	health_bar = ProgressBar.new()
 	health_bar.min_value = 0.0
@@ -212,6 +230,25 @@ func update_torch_button() -> void:
 	for state in ["normal", "hover", "pressed", "focus"]:
 		torch_btn.add_theme_stylebox_override(state, sb)
 
+func update_sprint_button() -> void:
+	var sb := StyleBoxFlat.new()
+	sb.set_corner_radius_all(60)
+	sb.set_border_width_all(3)
+	if sprint_on:
+		sb.bg_color = Color(0.2, 0.6, 1.0, 0.45)
+		sb.border_color = Color(0.6, 0.85, 1.0, 0.95)
+		sprint_btn.text = "RUN\nON"
+	else:
+		sb.bg_color = Color(0.1, 0.1, 0.1, 0.35)
+		sb.border_color = Color(1, 1, 1, 0.4)
+		sprint_btn.text = "RUN"
+	for state in ["normal", "hover", "pressed", "focus"]:
+		sprint_btn.add_theme_stylebox_override(state, sb)
+
+func toggle_sprint() -> void:
+	sprint_on = not sprint_on
+	update_sprint_button()
+
 func toggle_torch() -> void:
 	is_torch_on = !is_torch_on
 	spot_light.visible = is_torch_on
@@ -219,6 +256,8 @@ func toggle_torch() -> void:
 	play_sfx("click")
 
 func _process(delta: float) -> void:
+	var fov_target: float = FOV_BASE + (FOV_SPRINT if (sprint_on and move_input.length() > 0.3) else 0.0)
+	camera.fov = lerpf(camera.fov, fov_target, clampf(8.0 * delta, 0.0, 1.0))
 	# Camera smoothing: input thoda thoda karke lagta hai, jhatka nahi
 	if look_pending != Vector2.ZERO:
 		var k: float = 1.0 - exp(-delta / LOOK_SMOOTH)
@@ -252,6 +291,8 @@ func _input(event: InputEvent) -> void:
 				return
 			if attack_btn.visible and attack_btn.get_global_rect().has_point(event.position):
 				return
+			if sprint_btn.get_global_rect().has_point(event.position):
+				return
 			if is_move_zone(event.position):
 				if move_touch_index == -1:
 					move_touch_index = event.index
@@ -268,6 +309,9 @@ func _input(event: InputEvent) -> void:
 			elif event.index == move_touch_index:
 				move_touch_index = -1
 				move_input = Vector2.ZERO
+				if sprint_on:
+					sprint_on = false
+					update_sprint_button()
 
 	elif event is InputEventScreenDrag:
 		if event.index == look_touch_index:
@@ -291,6 +335,7 @@ func _input(event: InputEvent) -> void:
 # ---------------- Movement ----------------
 func _physics_process(delta: float) -> void:
 	attack_cooldown = maxf(0.0, attack_cooldown - delta)
+	step_interval = 0.42 / (SPRINT_MULT if sprint_on else 1.0)
 	if not is_on_floor():
 		velocity.y -= 20.0 * delta
 
@@ -300,7 +345,8 @@ func _physics_process(delta: float) -> void:
 		var strength: float = clampf((mag - JOY_DEADZONE) / (1.0 - JOY_DEADZONE), 0.0, 1.0)
 		strength = pow(strength, 0.8) # halka dhakka bhi achhi speed de
 		var dir2: Vector2 = move_input.normalized() * strength
-		wish = transform.basis * Vector3(dir2.x, 0, dir2.y) * max_speed
+		var speed_now: float = max_speed * (SPRINT_MULT if sprint_on else 1.0)
+		wish = transform.basis * Vector3(dir2.x, 0, dir2.y) * speed_now
 
 	velocity.x = move_toward(velocity.x, wish.x, accel * delta)
 	velocity.z = move_toward(velocity.z, wish.z, accel * delta)
@@ -313,7 +359,7 @@ func _physics_process(delta: float) -> void:
 	if step_stream == null:
 		if moving:
 			step_timer += delta
-			if step_timer >= 0.42:
+			if step_timer >= step_interval:
 				step_timer = 0.0
 				play_sfx("step")
 		else:
@@ -328,7 +374,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		if moving:
 			step_timer += delta
-			if step_timer >= 0.42:
+			if step_timer >= step_interval:
 				step_timer = 0.0
 				step_player.play()
 		else:
@@ -375,17 +421,24 @@ func play_any(base: String, fallback: String, volume_db: float = 0.0) -> void:
 # Pahle-person talwar (camera ke saath)
 func build_fp_sword() -> void:
 	sword_pivot = Node3D.new()
-	sword_pivot.position = Vector3(0.38, -0.38, -0.7)
-	sword_pivot.rotation_degrees = Vector3(-35, 12, -20)
+	sword_pivot.position = Vector3(0.22, -0.34, -0.6)
+	sword_pivot.rotation_degrees = Vector3(-30, 8, -18)
 	sword_pivot.visible = false
 	camera.add_child(sword_pivot)
+
+	# Pack ki asli talwar (Katana > Sword > ShortSword), na mile to code wali
+	if game_manager and game_manager.has_method("make_weapon"):
+		var file_sword: Node3D = game_manager.make_weapon(["Katana", "Sword", "ShortSword"], 0.95)
+		if file_sword:
+			sword_pivot.add_child(file_sword)
+			return
 
 	var steel := StandardMaterial3D.new()
 	steel.albedo_color = Color(0.8, 0.84, 0.9)
 	steel.roughness = 0.3
 	steel.emission_enabled = true
 	steel.emission = Color(0.3, 0.35, 0.42)
-	steel.emission_energy_multiplier = 0.8
+	steel.emission_energy_multiplier = 0.3
 	var brass := StandardMaterial3D.new()
 	brass.albedo_color = Color(0.75, 0.55, 0.2)
 	brass.roughness = 0.5
@@ -409,8 +462,8 @@ func swing_sword() -> void:
 	sword_tween = create_tween()
 	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-95, -55, 75), 0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.05, -0.3, -0.85), 0.12)
-	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-35, 12, -20), 0.3)
-	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.38, -0.38, -0.7), 0.3)
+	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-30, 8, -18), 0.3)
+	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.22, -0.34, -0.6), 0.3)
 
 func attack() -> void:
 	if not combat_enabled or dead or attack_cooldown > 0.0:
@@ -472,5 +525,5 @@ func update_torch_energy() -> void:
 	var f: float = 1.0
 	if not hit.is_empty():
 		var d: float = origin.distance_to(hit["position"])
-		f = clampf((d - 0.4) / 2.0, 0.1, 1.0)
+		f = clampf((d - 0.4) / 3.5, 0.12, 1.0)
 	spot_light.light_energy = lerpf(spot_light.light_energy, base_torch_energy * f, 0.3)

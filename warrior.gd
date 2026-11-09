@@ -9,7 +9,13 @@ enum State { GUARD, CHASE, WINDUP, STRIKE, RECOVER, HURT, DEAD }
 const MODEL_YAW: float = 180.0        # zyadatar models +Z dekhte hain. Ulta dikhe to 0.0 kar do
 const MODEL_HEIGHT: float = 1.9
 const ADD_SWORD_TO_MODEL: bool = true # model ke paas apni talwar ho to false kar do
+const TINT_WARRIORS: bool = true      # yoddha ko halka gehra laal-kaala rang (chhaya-grast look)
+const WEAPON_NAMES: Array[String] = ["Katana", "Sword", "ShortSword"]
+const WEAPON_LENGTH: Dictionary = {"Katana": 1.1, "Sword": 1.0, "ShortSword": 0.8}
+# Haath me talwar ki disha theek na dikhe to yahan (degree) badlo: jaise Vector3(90, 0, 0)
+const WEAPON_HAND_ROT: Vector3 = Vector3(0, 0, 0)
 
+var weapon_index: int = 0           # kaun si talwar (0 Katana, 1 Sword, 2 ShortSword)
 var max_health: int = 4
 var health: int = 4
 var move_speed: float = 3.2
@@ -71,11 +77,14 @@ func sfx(base: String, fallback: String, volume_db: float = 0.0) -> void:
 # ---------------- Model (optional) ----------------
 func try_model() -> bool:
 	var path: String = ""
-	for ext in ["glb", "gltf", "fbx", "GLB", "GLTF", "FBX"]:
-		var p: String = "res://models/warrior." + ext
-		if ResourceLoader.exists(p):
-			path = p
-			break
+	if game_manager and game_manager.has_method("find_model_path"):
+		path = game_manager.find_model_path(["warrior", "KnightCharacter"])
+	else:
+		for ext in ["glb", "gltf", "fbx", "GLB", "GLTF", "FBX"]:
+			var p: String = "res://models/warrior." + ext
+			if ResourceLoader.exists(p):
+				path = p
+				break
 	if path == "":
 		return false
 	var scene := load(path) as PackedScene
@@ -109,6 +118,14 @@ func try_model() -> bool:
 				var a: Animation = anim_player.get_animation(anims[k])
 				if a:
 					a.loop_mode = Animation.LOOP_LINEAR
+
+	if TINT_WARRIORS:
+		var tint := StandardMaterial3D.new()
+		tint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		tint.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		tint.albedo_color = Color(0.22, 0.03, 0.08, 0.38)
+		for node in model.find_children("*", "MeshInstance3D", true, false):
+			(node as MeshInstance3D).material_overlay = tint
 
 	if ADD_SWORD_TO_MODEL:
 		attach_sword_to_hand(model)
@@ -168,11 +185,22 @@ func attach_sword_to_hand(model: Node) -> void:
 	var ba := BoneAttachment3D.new()
 	ba.bone_name = bone_name
 	skel.add_child(ba)
-	var sword: Node3D = build_sword()
-	ba.add_child(sword)
 	var sc: float = skel.global_transform.basis.get_scale().x
-	if sc > 0.0001:
+	if sc <= 0.0001:
+		sc = 1.0
+
+	# Pehle pack ki asli talwar (Katana / Sword / ShortSword), na mile to code wali
+	var sword: Node3D = null
+	if game_manager and game_manager.has_method("make_weapon"):
+		var wname: String = WEAPON_NAMES[weapon_index % WEAPON_NAMES.size()]
+		sword = game_manager.make_weapon([wname], float(WEAPON_LENGTH[wname]), sc)
+	if sword == null:
+		sword = build_sword()
 		sword.scale = Vector3.ONE / sc
+	var grip := Node3D.new()
+	grip.rotation_degrees = WEAPON_HAND_ROT
+	ba.add_child(grip)
+	grip.add_child(sword)
 
 # ---------------- Sword (talwar) ----------------
 func build_sword() -> Node3D:

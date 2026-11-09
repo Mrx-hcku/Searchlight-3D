@@ -240,3 +240,115 @@ func water(dur: float) -> PackedFloat32Array:
 		b = lerpf(b, nz, 0.05)
 		out[i] = (a * 0.5 + b * 1.2) * 0.5
 	return out
+
+# ---------------- 3D model helpers (talwar, yoddha, etc.) ----------------
+const MODEL_EXTS: Array[String] = ["fbx", "glb", "gltf", "FBX", "GLB", "GLTF"]
+
+# models/ folder me naam se file dhoondo (capital/small dono, koi bhi extension)
+func find_model_path(names: Array) -> String:
+	for n in names:
+		for variant in [String(n), String(n).to_lower()]:
+			for e in MODEL_EXTS:
+				var p: String = "res://models/" + variant + "." + e
+				if ResourceLoader.exists(p):
+					return p
+	return ""
+
+# Weapon file se talwar: phal +Y par, mooth origin par, lambai = length (meter).
+# parent_scale: jis node ke neeche lagani hai uska scale (haddi/skeleton ka)
+func make_weapon(names: Array, length: float, parent_scale: float = 1.0) -> Node3D:
+	var path: String = find_model_path(names)
+	if path == "":
+		return null
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return null
+	var inst := scene.instantiate() as Node3D
+	if inst == null:
+		return null
+	var wrapper := Node3D.new()
+	wrapper.add_child(inst)
+	fit_weapon(wrapper, length, parent_scale)
+	return wrapper
+
+func fit_weapon(wrapper: Node3D, length: float, parent_scale: float) -> void:
+	var size: Vector3 = aabb_of(wrapper).size
+	var longest: float = maxf(size.x, maxf(size.y, size.z))
+	if longest <= 0.0001:
+		return
+	# Sabse lambi disha ko upar (+Y) le aao
+	var rot := Basis.IDENTITY
+	if size.x >= size.y and size.x >= size.z:
+		rot = Basis(Vector3(0, 0, 1), PI / 2.0)
+	elif size.z >= size.x and size.z >= size.y:
+		rot = Basis(Vector3(1, 0, 0), -PI / 2.0)
+	wrapper.basis = rot
+	# Mooth neeche rahe: jis chhor par cross-section badi ho wo mooth hai
+	if hilt_on_top(wrapper):
+		wrapper.basis = Basis(Vector3(1, 0, 0), PI) * rot
+	var s: float = length / longest / maxf(parent_scale, 0.0001)
+	wrapper.basis = wrapper.basis.scaled(Vector3.ONE * s)
+	var box: AABB = aabb_of(wrapper, true)
+	var c: Vector3 = box.get_center()
+	wrapper.position = -Vector3(c.x, box.position.y, c.z)
+
+func hilt_on_top(wrapper: Node3D) -> bool:
+	var verts := PackedVector3Array()
+	gather_verts(wrapper, wrapper.transform, verts)
+	if verts.size() < 12:
+		return false
+	var min_y: float = verts[0].y
+	var max_y: float = verts[0].y
+	var cx: float = 0.0
+	var cz: float = 0.0
+	for v in verts:
+		min_y = minf(min_y, v.y)
+		max_y = maxf(max_y, v.y)
+		cx += v.x
+		cz += v.z
+	cx /= verts.size()
+	cz /= verts.size()
+	var h: float = max_y - min_y
+	if h <= 0.0001:
+		return false
+	var w_low: float = 0.0
+	var w_high: float = 0.0
+	for v in verts:
+		var cross: float = maxf(absf(v.x - cx), absf(v.z - cz))
+		if v.y < min_y + 0.2 * h:
+			w_low = maxf(w_low, cross)
+		elif v.y > max_y - 0.2 * h:
+			w_high = maxf(w_high, cross)
+	return w_high > w_low * 1.15
+
+func gather_verts(node: Node, xform: Transform3D, out: PackedVector3Array) -> void:
+	for c in node.get_children():
+		if c is Node3D:
+			var t: Transform3D = xform * (c as Node3D).transform
+			if c is MeshInstance3D and (c as MeshInstance3D).mesh:
+				var faces: PackedVector3Array = (c as MeshInstance3D).mesh.get_faces()
+				var step: int = maxi(1, int(faces.size() / 4000.0))
+				var i: int = 0
+				while i < faces.size():
+					out.append(t * faces[i])
+					i += step
+			gather_verts(c, t, out)
+
+func collect_boxes(node: Node, xform: Transform3D, boxes: Array) -> void:
+	for c in node.get_children():
+		if c is Node3D:
+			var t: Transform3D = xform * (c as Node3D).transform
+			if c is MeshInstance3D and (c as MeshInstance3D).mesh:
+				boxes.append(t * (c as MeshInstance3D).mesh.get_aabb())
+			collect_boxes(c, t, boxes)
+
+# Tree me hone ki zarurat nahi: root ke bachchon ka milakar AABB
+func aabb_of(root: Node3D, include_root_transform: bool = false) -> AABB:
+	var boxes: Array = []
+	collect_boxes(root, root.transform if include_root_transform else Transform3D.IDENTITY, boxes)
+	if boxes.is_empty():
+		return AABB()
+	var result: AABB = boxes[0]
+	for i in range(1, boxes.size()):
+		result = result.merge(boxes[i])
+	return result

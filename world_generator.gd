@@ -16,6 +16,16 @@ func setup_environment() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.55, 0.60, 0.85)
 	env.ambient_light_energy = 2.0
+
+	# Professional look: filmic tonemap (safed jalna band), halka rang-sudhaar aur door ki dhundh
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_exposure = 1.2
+	env.adjustment_enabled = true
+	env.adjustment_contrast = 1.06
+	env.adjustment_saturation = 1.1
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.02, 0.02, 0.05)
+	env.fog_density = 0.008
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -88,13 +98,16 @@ func enter_magical_world() -> void:
 	if env == null:
 		return
 	env.glow_enabled = true
-	env.glow_intensity = 0.8
-	env.glow_bloom = 0.1
+	env.glow_intensity = 0.5
+	env.glow_bloom = 0.0
+	env.glow_hdr_threshold = 1.1
 
 	var t := create_tween().set_parallel(true)
 	t.tween_property(env, "background_color", Color(0.07, 0.03, 0.16), 4.0)
-	t.tween_property(env, "ambient_light_color", Color(0.55, 0.50, 0.95), 4.0)
+	t.tween_property(env, "ambient_light_color", Color(0.62, 0.58, 0.92), 4.0)
 	t.tween_property(env, "ambient_light_energy", 2.0, 4.0)
+	t.tween_property(env, "fog_light_color", Color(0.07, 0.03, 0.16), 4.0)
+	t.tween_property(env, "fog_density", 0.004, 4.0)
 	var moon := get_node_or_null("../DirectionalLight3D") as DirectionalLight3D
 	if moon:
 		t.tween_property(moon, "light_color", Color(0.60, 0.45, 0.95), 4.0)
@@ -104,8 +117,9 @@ func set_daylight(t: float, duration: float = 2.5) -> void:
 	if env == null:
 		return
 	var tw := create_tween().set_parallel(true)
-	tw.tween_property(env, "ambient_light_energy", lerpf(2.0, 4.6, t), duration)
-	tw.tween_property(env, "ambient_light_color", Color(0.55, 0.50, 0.95).lerp(Color(1.0, 0.93, 0.78), t), duration)
+	tw.tween_property(env, "ambient_light_energy", lerpf(2.0, 3.4, t), duration)
+	tw.tween_property(env, "ambient_light_color", Color(0.62, 0.58, 0.92).lerp(Color(1.0, 0.93, 0.78), t), duration)
+	tw.tween_property(env, "fog_light_color", Color(0.07, 0.03, 0.16).lerp(Color(0.55, 0.42, 0.50), t), duration)
 	tw.tween_property(env, "background_color", Color(0.07, 0.03, 0.16).lerp(Color(0.60, 0.45, 0.55), t), duration)
 	var moon := get_node_or_null("../DirectionalLight3D") as DirectionalLight3D
 	if moon:

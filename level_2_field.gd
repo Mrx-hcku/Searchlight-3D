@@ -24,21 +24,45 @@ const WATER_SHADER: String = """
 shader_type spatial;
 render_mode unshaded, blend_mix, cull_disabled, depth_draw_never;
 uniform float glow = 0.3;
-uniform vec3 tint : source_color = vec3(0.65, 0.88, 1.0);
-float hash(vec2 p) {
-	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+uniform vec3 deep_color : source_color = vec3(0.35, 0.60, 0.85);
+uniform vec3 foam_color : source_color = vec3(0.92, 0.97, 1.0);
+
+float hash21(vec2 p) {
+	p = fract(p * vec2(123.34, 456.21));
+	p += dot(p, p + 45.32);
+	return fract(p.x * p.y);
+}
+float vnoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float a = hash21(i);
+	float b = hash21(i + vec2(1.0, 0.0));
+	float c = hash21(i + vec2(0.0, 1.0));
+	float d = hash21(i + vec2(1.0, 1.0));
+	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 void fragment() {
-	float x = UV.x * 24.0;
-	float c = floor(x);
-	float speed = 0.5 + hash(vec2(c, 1.0)) * 0.9;
-	float y = UV.y * 5.0 - TIME * speed + hash(vec2(c, 7.0)) * 5.0;
-	float streak = smoothstep(0.45, 1.0, fract(y));
-	float edge = smoothstep(0.0, 0.35, fract(x)) * smoothstep(1.0, 0.65, fract(x));
-	float a = (0.3 + 0.7 * streak) * edge;
-	a *= smoothstep(0.0, 0.04, UV.y);
-	ALBEDO = tint * (0.6 + 1.6 * glow);
-	ALPHA = a * (0.35 + 0.6 * glow);
+	vec2 uv = UV;
+	// Girta paani: lambi, dheere hilti dhaaraein (noise ko seedha kheencha hua)
+	float n1 = vnoise(vec2(uv.x * 14.0, uv.y * 1.6 - TIME * 1.1));
+	float n2 = vnoise(vec2(uv.x * 30.0 + 7.0, uv.y * 2.4 - TIME * 1.7));
+	float n3 = vnoise(vec2(uv.x * 6.0 - 3.0, uv.y * 0.9 - TIME * 0.6));
+	float flow = n1 * 0.5 + n2 * 0.3 + n3 * 0.2;
+	float streak = smoothstep(0.35, 0.85, flow);
+
+	// Kinaaron par naram fade, upar chattan se shuruaat, neeche jhaag
+	float edge = smoothstep(0.0, 0.12, uv.x) * smoothstep(1.0, 0.88, uv.x);
+	float top = smoothstep(0.0, 0.06, uv.y);
+	float foam_zone = smoothstep(0.88, 1.0, uv.y);
+	float foam = foam_zone * (0.6 + 0.4 * vnoise(vec2(uv.x * 22.0, TIME * 2.5)));
+
+	vec3 col = mix(deep_color, foam_color, clamp(streak * 0.7 + foam, 0.0, 1.0));
+	float a = (0.25 + 0.55 * streak) * edge * top;
+	a = clamp(a + foam * 0.5 * edge, 0.0, 0.9);
+
+	ALBEDO = col * (0.45 + 0.9 * glow);
+	ALPHA = a * (0.55 + 0.45 * glow);
 }
 """
 
@@ -192,7 +216,7 @@ func build_field() -> void:
 	ground_mesh.size = Vector2(152.0, 150.0)
 	var ground := MeshInstance3D.new()
 	ground.mesh = ground_mesh
-	ground.material_override = mat_color(Color(0.14, 0.16, 0.21), 0.95)
+	ground.material_override = ground_material()
 	ground.position = Vector3(cx + 2.0, 0.02, 0.0)
 	add_child(ground)
 
@@ -298,6 +322,75 @@ func build_masal(pos: Vector3) -> Masal:
 	root.add_child(m.fire)
 	return m
 
+# Naram dhundh (billboard dhuein ke gole, kathor gole nahi)
+func make_mist(pos: Vector3, extents: Vector3) -> CPUParticles3D:
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 1.0])
+	g.colors = PackedColorArray([Color(1, 1, 1, 0.9), Color(1, 1, 1, 0.0)])
+	var tex := GradientTexture2D.new()
+	tex.gradient = g
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(1.0, 0.5)
+	tex.width = 64
+	tex.height = 64
+
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.albedo_texture = tex
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.billboard_keep_scale = true
+
+	var quad := QuadMesh.new()
+	quad.size = Vector2(3.2, 3.2)
+	quad.material = mat
+
+	var fade := Gradient.new()
+	fade.offsets = PackedFloat32Array([0.0, 0.3, 1.0])
+	fade.colors = PackedColorArray([Color(0.85, 0.93, 1.0, 0.0), Color(0.85, 0.93, 1.0, 0.16), Color(0.85, 0.93, 1.0, 0.0)])
+
+	var p := CPUParticles3D.new()
+	p.position = pos
+	p.mesh = quad
+	p.amount = 45
+	p.lifetime = 4.0
+	p.preprocess = 4.0
+	p.local_coords = false
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	p.emission_box_extents = extents
+	p.direction = Vector3(-1, 0.6, 0)
+	p.spread = 35.0
+	p.gravity = Vector3.ZERO
+	p.initial_velocity_min = 0.3
+	p.initial_velocity_max = 0.9
+	p.scale_amount_min = 0.8
+	p.scale_amount_max = 1.8
+	p.color_ramp = fade
+	p.emitting = true
+	return p
+
+# Mitti jaisi zameen (noise texture se halki bhed-bhaav)
+func ground_material() -> StandardMaterial3D:
+	var noise := FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.frequency = 0.012
+	var ramp := Gradient.new()
+	ramp.offsets = PackedFloat32Array([0.0, 1.0])
+	ramp.colors = PackedColorArray([Color(0.13, 0.11, 0.09), Color(0.27, 0.23, 0.17)])
+	var tex := NoiseTexture2D.new()
+	tex.noise = noise
+	tex.color_ramp = ramp
+	tex.width = 512
+	tex.height = 512
+	tex.seamless = true
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = tex
+	m.uv1_scale = Vector3(14.0, 14.0, 1.0)
+	m.roughness = 1.0
+	return m
+
 # ---------------- Jharna aur kund ----------------
 func build_waterfall() -> void:
 	var shader := Shader.new()
@@ -307,7 +400,7 @@ func build_waterfall() -> void:
 	waterfall_mat.set_shader_parameter("glow", 0.3)
 
 	var quad := QuadMesh.new()
-	quad.size = Vector2(18.0, 32.0)
+	quad.size = Vector2(15.0, 32.0)
 	var fall := MeshInstance3D.new()
 	fall.mesh = quad
 	fall.material_override = waterfall_mat
@@ -317,11 +410,11 @@ func build_waterfall() -> void:
 	add_child(fall)
 
 	var pool_mat := StandardMaterial3D.new()
-	pool_mat.albedo_color = Color(0.2, 0.45, 0.7, 0.55)
+	pool_mat.albedo_color = Color(0.12, 0.30, 0.50, 0.6)
 	pool_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	pool_mat.emission_enabled = true
-	pool_mat.emission = Color(0.1, 0.3, 0.6)
-	pool_mat.emission_energy_multiplier = 0.6
+	pool_mat.emission = Color(0.05, 0.18, 0.35)
+	pool_mat.emission_energy_multiplier = 0.4
 	var pool_mesh := CylinderMesh.new()
 	pool_mesh.top_radius = 6.0
 	pool_mesh.bottom_radius = 6.0
@@ -333,12 +426,12 @@ func build_waterfall() -> void:
 	add_child(pool)
 
 	# Jharne ke neeche dhundh
-	add_child(make_particles(Vector3(238.0, 1.0, 0.0), 40, 3.0, 0.9, Color(0.8, 0.9, 1.0, 0.22), Color(0.8, 0.9, 1.0, 0.0), 0.2, 0.6, Vector3(1.5, 0.6, 7.0), 30.0))
+	add_child(make_mist(Vector3(238.0, 1.2, 0.0), Vector3(1.5, 0.6, 6.0)))
 
 # ---------------- Nataraj ki murti (placeholder; models/nataraj.glb mile to wahi) ----------------
 func build_statue() -> void:
 	# Chabutra hamesha dikhta hai (khaali), murti baad me prakat hoti hai
-	var base_mat := mat_color(Color(0.26, 0.24, 0.32), 0.9)
+	var base_mat := mat_color(Color(0.20, 0.18, 0.24), 0.9)
 	add_box(Vector3(4.4, 1.2, 4.4), STATUE_POS + Vector3(0, 0.6, 0), base_mat)
 
 	statue_root = Node3D.new()
@@ -649,9 +742,11 @@ func spawn_warriors() -> void:
 		Vector3(199.0, 0.0, -38.0), Vector3(199.0, 0.0, 38.0),
 		Vector3(221.0, 0.0, -7.0), Vector3(221.0, 0.0, 7.0)
 	]
-	for pos in posts:
+	for i in range(posts.size()):
+		var pos: Vector3 = posts[i]
 		var w := CharacterBody3D.new()
 		w.set_script(warrior_script)
+		w.set("weapon_index", i % 3)
 		w.set("player", player)
 		w.set("game_manager", game_manager_node)
 		w.set("home", pos)
