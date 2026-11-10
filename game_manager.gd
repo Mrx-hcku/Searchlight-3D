@@ -17,6 +17,7 @@ func _ready() -> void:
 	rng.randomize()
 	setup_audio_system()
 	build_sfx()
+	call_deferred("_resume_game")
 
 # ---------- Ambient drone ----------
 func setup_audio_system() -> void:
@@ -33,7 +34,12 @@ func setup_audio_system() -> void:
 	playback = ambient_player.get_stream_playback() as AudioStreamGeneratorPlayback
 	print("Atmospheric Audio Manager Initialized for Searchlight 3D.")
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	autosave_timer += delta
+	if autosave_timer >= 8.0:
+		autosave_timer = 0.0
+		save_now()
+
 	if playback == null:
 		return
 
@@ -108,6 +114,8 @@ func build_sfx() -> void:
 	sfx["creak"] = make_wav(creak(2.2))
 	sfx["hit"] = make_wav(noise_burst(0.35, 9.0, 0.12, 55.0))
 	sfx["slash"] = make_wav(whoosh(0.25))
+	sfx["clash"] = make_wav(clash(0.6))
+	sfx["shield"] = make_wav(shield_hit(0.5))
 	sfx["water"] = make_wav(water(4.0), true)
 
 # Level 2 ke jharne ki awaaz ke liye stream
@@ -352,3 +360,168 @@ func aabb_of(root: Node3D, include_root_transform: bool = false) -> AABB:
 	for i in range(1, boxes.size()):
 		result = result.merge(boxes[i])
 	return result
+
+# Talwar takrane ki dhaatu jaisi awaaz (tumhari sword_clash file na ho to)
+func clash(dur: float) -> PackedFloat32Array:
+	var n := int(dur * MIX_RATE)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var freqs: Array = [820.0, 1310.0, 2240.0, 3170.0]
+	for i in range(n):
+		var t: float = i / MIX_RATE
+		var s: float = 0.0
+		for f in freqs:
+			s += sin(TAU * float(f) * t + sin(t * 40.0) * 0.3)
+		var burst: float = rng.randf_range(-1.0, 1.0) * exp(-t * 80.0)
+		out[i] = (s / freqs.size() * 0.55 + burst * 0.5) * exp(-t * 9.0)
+	return out
+
+# Dhaal par vaar ki bhaari thud + halki gunj (tumhari shield_clash file na ho to)
+func shield_hit(dur: float) -> PackedFloat32Array:
+	var n := int(dur * MIX_RATE)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var freqs: Array = [180.0, 340.0, 520.0]
+	var lp: float = 0.0
+	for i in range(n):
+		var t: float = i / MIX_RATE
+		var s: float = 0.0
+		for f in freqs:
+			s += sin(TAU * float(f) * t)
+		lp = lerpf(lp, rng.randf_range(-1.0, 1.0), 0.2)
+		out[i] = (s / freqs.size() * 0.5 + lp * exp(-t * 60.0) * 0.8) * exp(-t * 11.0)
+	return out
+
+# ---------------- Sword pack (swords.glb) se ek talwar ----------------
+# Pack me 4 talwarein ek hi file me hoti hain: unke tukde (meshes) position ke hisaab se 4 jhund me baant kar
+# index wali talwar banai jati hai (phal +Y par, mooth origin par, lambai = length meter)
+func make_pack_weapon(index: int, length: float, parent_scale: float = 1.0) -> Node3D:
+	var path: String = find_model_path(["swords", "sword_pack", "neptunia"])
+	if path == "":
+		return null
+	var scene := load(path) as PackedScene
+	if scene == null:
+		return null
+	var inst := scene.instantiate() as Node3D
+	if inst == null:
+		return null
+	var groups: Array = split_pack(inst)
+	if groups.is_empty():
+		inst.free()
+		return null
+	var group: Array = groups[index % groups.size()]
+	var wrapper := Node3D.new()
+	for it in group:
+		var mi: MeshInstance3D = it["mi"]
+		var ni := MeshInstance3D.new()
+		ni.mesh = mi.mesh
+		ni.transform = it["t"]
+		for s in range(mi.mesh.get_surface_count()):
+			var m: Material = mi.get_active_material(s)
+			if m:
+				ni.set_surface_override_material(s, m)
+		wrapper.add_child(ni)
+	inst.free()
+	fit_weapon(wrapper, length, parent_scale)
+	return wrapper
+
+func collect_meshes(node: Node, xform: Transform3D, out: Array) -> void:
+	for c in node.get_children():
+		if c is Node3D:
+			var t: Transform3D = xform * (c as Node3D).transform
+			if c is MeshInstance3D and (c as MeshInstance3D).mesh:
+				var mi := c as MeshInstance3D
+				out.append({"mi": mi, "t": t, "c": (t * mi.mesh.get_aabb()).get_center()})
+			collect_meshes(c, t, out)
+
+func split_pack(inst: Node3D) -> Array:
+	var items: Array = []
+	collect_meshes(inst, Transform3D.IDENTITY, items)
+	if items.is_empty():
+		return []
+	var minv: Vector3 = items[0]["c"]
+	var maxv: Vector3 = items[0]["c"]
+	for it in items:
+		minv = minv.min(it["c"])
+		maxv = maxv.max(it["c"])
+	var spread: Vector3 = maxv - minv
+	var axis: int = 0
+	if spread.y >= spread.x and spread.y >= spread.z:
+		axis = 1
+	elif spread.z >= spread.x and spread.z >= spread.y:
+		axis = 2
+	items.sort_custom(func(a, b): return a["c"][axis] < b["c"][axis])
+	var gaps: Array = []
+	for i in range(items.size() - 1):
+		gaps.append({"gap": items[i + 1]["c"][axis] - items[i]["c"][axis], "i": i})
+	gaps.sort_custom(func(a, b): return a["gap"] > b["gap"])
+	var cuts: Array = []
+	for k in range(mini(3, gaps.size())):
+		cuts.append(gaps[k]["i"])
+	cuts.sort()
+	var groups: Array = []
+	var start: int = 0
+	for c in cuts:
+		groups.append(items.slice(start, int(c) + 1))
+		start = int(c) + 1
+	groups.append(items.slice(start))
+	return groups
+
+# ---------------- Save / Resume ----------------
+# App band karke dobara kholne par game wahin se shuru hota hai (user://searchlight_save.json)
+const SAVE_PATH: String = "user://searchlight_save.json"
+var save_enabled: bool = false
+var autosave_timer: float = 0.0
+
+func build_save() -> Dictionary:
+	var data: Dictionary = {"version": 1}
+	var player = get_node_or_null("../Player")
+	if player and player.has_method("get_save_data"):
+		data["player"] = player.get_save_data()
+	var l1 = get_node_or_null("../Level1Maze")
+	if l1 and l1.has_method("get_save_data"):
+		data["level1"] = l1.get_save_data()
+	var l2 = get_node_or_null("../Level2Field")
+	if l2 and l2.has_method("get_save_data"):
+		data["level2"] = l2.get_save_data()
+	return data
+
+func save_now() -> void:
+	if not save_enabled:
+		return
+	var player = get_node_or_null("../Player")
+	if player and player.get("dead"):
+		return
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(build_save()))
+		f.close()
+
+func load_save() -> Dictionary:
+	if not FileAccess.file_exists(SAVE_PATH):
+		return {}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return {}
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if parsed is Dictionary:
+		return parsed
+	return {}
+
+# Saare nodes ready hone ke baad (deferred) purani progress wapas lagao
+func _resume_game() -> void:
+	var data: Dictionary = load_save()
+	if not data.is_empty():
+		var l1 = get_node_or_null("../Level1Maze")
+		if l1 and data.has("level1") and l1.has_method("apply_save_data"):
+			l1.apply_save_data(data["level1"], data.get("level2", {}))
+		var player = get_node_or_null("../Player")
+		if player and data.has("player") and player.has_method("apply_save_data"):
+			player.apply_save_data(data["player"])
+	save_enabled = true
+
+# Android par home dabane / app band karne par turant save
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_GO_BACK_REQUEST or what == NOTIFICATION_WM_CLOSE_REQUEST:
+		save_now()

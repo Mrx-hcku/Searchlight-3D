@@ -72,6 +72,9 @@ const FIELD_MAX_X: float = 240.0
 const FIELD_HALF_Z: float = 70.0
 const WALL_H: float = 34.0
 const STATUE_POS: Vector3 = Vector3(231.0, 0.0, 0.0)
+# swords.glb me kaun si talwar kiske paas (0..3). Pasand/disha galat lage to ye number badlo
+const GROUND_SWORD_INDEX: int = 1
+const BOSS_SWORD_INDEX: int = 3
 
 # ---- Tuning ----
 var masal_beam_angle: float = 12.0     # masal par kiran kitni seedhi
@@ -105,6 +108,16 @@ var statue_revealed: bool = false
 var portal_open: bool = false
 var finished: bool = false
 var portal_age: float = 0.0
+
+# Boss ladai: 0 = abhi nahi, 1 = chal rahi hai, 2 = boss mara
+var boss_state: int = 0
+var boss_node: CharacterBody3D
+var guards: Array = []
+var guards_alive: int = 0
+var tension_player: AudioStreamPlayer
+var boss_bar: ProgressBar
+var boss_label: Label
+var last_hint_time: float = -100.0
 
 var statue_root: Node3D
 var statue_light: OmniLight3D
@@ -596,6 +609,31 @@ func build_ui() -> void:
 	toast_label.modulate.a = 0.0
 	canvas.add_child(toast_label)
 
+	# Boss ka health bar (ladai ke dauran upar beech me)
+	boss_label = make_hud_label(font, 28, 190.0, Color(1.0, 0.85, 0.4))
+	boss_label.text = "योद्धा-राज"
+	boss_label.visible = false
+	canvas.add_child(boss_label)
+
+	var vp_w: float = get_viewport().get_visible_rect().size.x
+	boss_bar = ProgressBar.new()
+	boss_bar.min_value = 0.0
+	boss_bar.max_value = 100.0
+	boss_bar.value = 100.0
+	boss_bar.show_percentage = false
+	boss_bar.size = Vector2(620, 20)
+	boss_bar.position = Vector2(vp_w / 2.0 - 310.0, 240.0)
+	var bb_bg := StyleBoxFlat.new()
+	bb_bg.bg_color = Color(0, 0, 0, 0.55)
+	bb_bg.set_corner_radius_all(10)
+	var bb_fill := StyleBoxFlat.new()
+	bb_fill.bg_color = Color(0.95, 0.7, 0.15, 0.95)
+	bb_fill.set_corner_radius_all(10)
+	boss_bar.add_theme_stylebox_override("background", bb_bg)
+	boss_bar.add_theme_stylebox_override("fill", bb_fill)
+	boss_bar.visible = false
+	canvas.add_child(boss_bar)
+
 func make_hud_label(font: Font, size: int, top: float, color: Color) -> Label:
 	var l := Label.new()
 	l.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -612,7 +650,14 @@ func make_hud_label(font: Font, size: int, top: float, color: Color) -> Label:
 	return l
 
 func update_hud() -> void:
-	hud_label.text = "मशालें: %d / %d" % [lit_count, masals.size()]
+	hud_label.text = "मशालें: %d / %d    योद्धा: %d" % [lit_count, masals.size(), alive_count()]
+
+func alive_count() -> int:
+	var n: int = 0
+	for w in warriors:
+		if is_instance_valid(w) and not w.is_queued_for_deletion() and not (w.has_method("is_dead") and w.is_dead()):
+			n += 1
+	return n
 
 func toast(text: String) -> void:
 	toast_label.text = text
@@ -636,6 +681,18 @@ func build_audio() -> void:
 			tandav_player.stream = st
 			tandav_player.finished.connect(_on_tandav_finished)
 
+	# Boss ka suspense/tension music (boss ke marne tak)
+	tension_player = AudioStreamPlayer.new()
+	tension_player.volume_db = -40.0
+	add_child(tension_player)
+	if game_manager_node and game_manager_node.has_method("load_audio"):
+		var ts: AudioStream = game_manager_node.load_audio("res://audio/boss_tension")
+		if ts:
+			if ts is AudioStreamMP3 or ts is AudioStreamOggVorbis:
+				ts.set("loop", true)
+			tension_player.stream = ts
+			tension_player.finished.connect(_on_tension_finished)
+
 	# Jharne ki awaaz (door se bhi halki sunayi deti hai)
 	if game_manager_node and game_manager_node.has_method("get_sfx_stream"):
 		var ws: AudioStream = game_manager_node.get_sfx_stream("water")
@@ -648,6 +705,10 @@ func build_audio() -> void:
 			water.position = Vector3(236.0, 3.0, 0.0)
 			add_child(water)
 			water.play()
+
+func _on_tension_finished() -> void:
+	if boss_state == 1:
+		tension_player.play()
 
 func _on_tandav_finished() -> void:
 	if statue_revealed and not finished:
@@ -665,6 +726,9 @@ func _physics_process(delta: float) -> void:
 		var space := get_world_3d().direct_space_state
 		var torch_on: bool = player.is_torch_on
 		update_masals(delta, origin, forward, space, torch_on)
+
+	if boss_state == 1:
+		update_boss()
 
 	if statue_revealed:
 		update_statue_and_portal(delta)
@@ -710,6 +774,7 @@ func ignite(m: Masal) -> void:
 		wg.set_daylight(float(lit_count) / float(masals.size()))
 	sfx("rune")
 	update_hud()
+	save_game()
 	if lit_count >= masals.size():
 		on_all_lit()
 	else:
@@ -717,10 +782,11 @@ func ignite(m: Masal) -> void:
 
 func on_all_lit() -> void:
 	complete = true
-	toast("चारों मशालें जल उठीं... महादेव का द्वार प्रकट हो रहा है")
+	toast("चारों मशालें जल उठीं... महादेव की मूर्ति प्रकट हो रही है")
 	sfx("complete")
 	sfx("door", -4.0)
 	reveal_statue()
+	check_boss_trigger()
 
 func reveal_statue() -> void:
 	statue_revealed = true
@@ -732,61 +798,248 @@ func reveal_statue() -> void:
 	t.tween_property(statue_light, "light_energy", 2.5, 3.0)
 
 # --- Yoddha (talwar wale pehredaar) ---
+func make_warrior(script: Script, role: String, pos: Vector3, sword_idx: int) -> CharacterBody3D:
+	var w := CharacterBody3D.new()
+	w.set_script(script)
+	w.set("role", role)
+	w.set("sword_pack_index", sword_idx)
+	w.set("player", player)
+	w.set("game_manager", game_manager_node)
+	w.set("home", pos)
+	w.position = pos + Vector3(0.0, 0.1, 0.0)
+	add_child(w)
+	return w
+
 func spawn_warriors() -> void:
 	var warrior_script := load("res://warrior.gd") as Script
 	if warrior_script == null:
 		return
-	# 4 masalon ke paas ek-ek, 2 murti ke paas
+	# 4 masalon ke paas ek-ek, 2 murti ke paas (sab talwar wale, tribal model)
 	var posts: Array[Vector3] = [
 		Vector3(134.0, 0.0, -38.0), Vector3(134.0, 0.0, 38.0),
 		Vector3(199.0, 0.0, -38.0), Vector3(199.0, 0.0, 38.0),
 		Vector3(221.0, 0.0, -7.0), Vector3(221.0, 0.0, 7.0)
 	]
-	for i in range(posts.size()):
-		var pos: Vector3 = posts[i]
-		var w := CharacterBody3D.new()
-		w.set_script(warrior_script)
-		w.set("weapon_index", i % 3)
-		w.set("player", player)
-		w.set("game_manager", game_manager_node)
-		w.set("home", pos)
-		w.position = pos + Vector3(0.0, 0.1, 0.0)
-		add_child(w)
+	for pos in posts:
+		var w: CharacterBody3D = make_warrior(warrior_script, "ground", pos, GROUND_SWORD_INDEX)
+		w.connect("died", Callable(self, "_on_warrior_died"))
 		warriors.append(w)
+	update_hud()
 
-# Khilaadi gir jaye to maidan ke pravesh par uthta hai, bache hue yoddha apni jagah laut jate hain
+func _on_warrior_died(_w) -> void:
+	update_hud()
+	save_game()
+	check_boss_trigger()
+
+# Chhah yoddha mar gaye aur chaaron masal jal chuki hon to boss prakat hota hai
+func check_boss_trigger() -> void:
+	if boss_state != 0 or not active:
+		return
+	if lit_count < masals.size() or alive_count() > 0:
+		return
+	spawn_boss_wave()
+
+func spawn_boss_wave(silent: bool = false) -> void:
+	var warrior_script := load("res://warrior.gd") as Script
+	if warrior_script == null:
+		boss_state = 2
+		return
+	boss_state = 1
+	var spawn: Vector3 = STATUE_POS + Vector3(-7.0, 0.0, 0.0)
+
+	boss_node = make_warrior(warrior_script, "boss", spawn, BOSS_SWORD_INDEX)
+	boss_node.connect("died", Callable(self, "_on_boss_died"))
+	boss_node.connect("blocked", Callable(self, "_on_boss_blocked"))
+	boss_node.call("set_invulnerable", true)
+
+	guards.clear()
+	guards_alive = 0
+	for z in [-5.0, 5.0]:
+		var g: CharacterBody3D = make_warrior(warrior_script, "guard", spawn + Vector3(-2.0, 0.0, z), 0)
+		g.connect("died", Callable(self, "_on_guard_died"))
+		guards.append(g)
+		guards_alive += 1
+
+	boss_bar.value = 100.0
+	boss_bar.visible = true
+	boss_label.visible = true
+	start_tension()
+
+	if not silent:
+		toast("योद्धा-राज प्रकट हुआ! पहले उसके रक्षकों को हराओ")
+		sfx("door")
+		sfx("complete", -4.0)
+		# Sunehri chamak aur boss ka dheere ubharna
+		hit_overlay.color = Color(1.0, 0.85, 0.4, 0.55)
+		var flash := create_tween()
+		flash.tween_property(hit_overlay, "color:a", 0.0, 1.2)
+		flash.tween_callback(reset_overlay)
+		var v = boss_node.get("visual")
+		if v:
+			var target: Vector3 = v.scale
+			v.scale = target * 0.01
+			create_tween().tween_property(v, "scale", target, 1.6).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	save_game()
+
+func reset_overlay() -> void:
+	hit_overlay.color = Color(0, 0, 0, 0)
+
+func _on_guard_died(_g) -> void:
+	guards_alive -= 1
+	save_game()
+	if guards_alive <= 0 and is_instance_valid(boss_node):
+		boss_node.call("set_invulnerable", false)
+		toast("रक्षक गिर गए... अब योद्धा-राज पर वार करो!")
+		sfx("complete", -4.0)
+
+func _on_boss_blocked(_b) -> void:
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now - last_hint_time > 4.0:
+		last_hint_time = now
+		toast("योद्धा-राज के कवच को तोड़ने के लिए पहले दोनों रक्षकों को हराओ")
+
+func _on_boss_died(_b) -> void:
+	boss_state = 2
+	stop_tension()
+	boss_bar.visible = false
+	boss_label.visible = false
+	toast("योद्धा-राज गिर गया! अब महादेव का द्वार खुल सकता है")
+	sfx("complete")
+	save_game()
+
+func update_boss() -> void:
+	if is_instance_valid(boss_node):
+		var hp: float = float(boss_node.get("health"))
+		var mx: float = maxf(float(boss_node.get("max_health")), 1.0)
+		boss_bar.value = hp / mx * 100.0
+	if tension_player.stream and tension_player.playing:
+		tension_player.volume_db = lerpf(tension_player.volume_db, -4.0, 0.04)
+
+func start_tension() -> void:
+	if tension_player.stream:
+		tension_player.volume_db = -30.0
+		tension_player.play()
+
+func stop_tension() -> void:
+	if tension_player.stream and tension_player.playing:
+		var t := create_tween()
+		t.tween_property(tension_player, "volume_db", -40.0, 3.0)
+		t.tween_callback(tension_player.stop)
+
+# Khilaadi gir jaye to maidan ke pravesh par uthta hai, bache hue dushman apni jagah laut jate hain
 func _on_player_died() -> void:
 	toast("तुम गिर गए... फिर उठो")
 	var t := create_tween()
-	t.tween_property(hit_overlay, "color:a", 1.0, 0.7)
+	t.tween_property(hit_overlay, "color", Color(0, 0, 0, 1), 0.7)
 	await t.finished
 	player.respawn_at(Vector3(110.0, 0.5, 0.0))
-	for w in warriors:
+	var everyone: Array = warriors + guards
+	if is_instance_valid(boss_node):
+		everyone.append(boss_node)
+	for w in everyone:
 		if is_instance_valid(w) and w.has_method("reset_to_home"):
 			w.reset_to_home()
 	await get_tree().create_timer(0.5).timeout
 	create_tween().tween_property(hit_overlay, "color:a", 0.0, 0.8)
+
+# ---------------- Save / Resume ----------------
+func save_game() -> void:
+	if game_manager_node and game_manager_node.has_method("save_now"):
+		game_manager_node.save_now()
+
+func get_save_data() -> Dictionary:
+	var lit: Array = []
+	for m in masals:
+		lit.append(m.lit)
+	var dead: Array = []
+	for i in range(warriors.size()):
+		var w = warriors[i]
+		if not is_instance_valid(w) or w.is_queued_for_deletion() or (w.has_method("is_dead") and w.is_dead()):
+			dead.append(i)
+	return {"masals": lit, "dead_warriors": dead, "boss_state": boss_state, "portal_open": portal_open}
+
+func light_masal_silent(m: Masal) -> void:
+	m.lit = true
+	lit_count += 1
+	m.fire.emitting = true
+	m.light.light_energy = 5.0
+	m.light.omni_range = 40.0
+	m.ember_mat.emission_energy_multiplier = 6.0
+
+func apply_save_data(d: Dictionary) -> void:
+	var lit: Array = d.get("masals", [])
+	for i in range(mini(lit.size(), masals.size())):
+		if bool(lit[i]):
+			light_masal_silent(masals[i])
+	if lit_count > 0:
+		var wg := get_node_or_null("../WorldGenerator")
+		if wg and wg.has_method("set_daylight"):
+			wg.set_daylight(float(lit_count) / float(masals.size()), 0.2)
+	for idx in d.get("dead_warriors", []):
+		var i: int = int(idx)
+		if i >= 0 and i < warriors.size() and is_instance_valid(warriors[i]):
+			warriors[i].queue_free()
+	update_hud()
+
+	if lit_count >= masals.size():
+		complete = true
+		reveal_statue_instant()
+		var bs: int = int(d.get("boss_state", 0))
+		if bs == 2:
+			boss_state = 2
+		elif bs == 1:
+			spawn_boss_wave(true)
+		else:
+			check_boss_trigger()
+		if bool(d.get("portal_open", false)) and boss_state == 2:
+			open_portal_instant()
+
+func reveal_statue_instant() -> void:
+	statue_revealed = true
+	statue_root.visible = true
+	statue_root.scale = Vector3.ONE
+	waterfall_mat.set_shader_parameter("glow", 1.0)
+	statue_light.light_energy = 2.5
+
+func open_portal_instant() -> void:
+	portal_open = true
+	portal.visible = true
+	portal.scale = Vector3.ONE
+	portal_mat.set_shader_parameter("amount", 1.0)
+	statue_root.scale = Vector3.ONE * 0.01
+	portal_age = 5.0
 
 # --- Murti, Tandav aur portal ---
 func update_statue_and_portal(delta: float) -> void:
 	var p: Vector3 = player.global_position
 	var dist: float = Vector2(p.x - STATUE_POS.x, p.z - STATUE_POS.z).length()
 
-	# Shiv Tandav: paas jaate hi dheere se shuru
+	# Shiv Tandav: paas jaate hi dheere se shuru (boss ladai me band, uski jagah tension music)
 	if tandav_player.stream and not finished:
 		var target: float = lerpf(-40.0, -6.0, clampf((50.0 - dist) / 35.0, 0.0, 1.0))
-		if dist < 50.0 and not tandav_player.playing:
+		if boss_state == 1:
+			target = -40.0
+		if dist < 50.0 and boss_state != 1 and not tandav_player.playing:
 			tandav_player.play()
 		tandav_player.volume_db = lerpf(tandav_player.volume_db, target, 0.05)
 
 	if not portal_open:
 		if dist < 9.0:
-			open_portal()
+			if boss_state == 2:
+				open_portal()
+			elif boss_state == 0:
+				hint_locked()
 	elif not finished:
 		portal_age += delta
 		portal.look_at(Vector3(p.x, portal.global_position.y, p.z), Vector3.UP)
 		if portal_age > 3.0 and dist < 3.4:
 			finish_level()
+
+func hint_locked() -> void:
+	var now: float = Time.get_ticks_msec() / 1000.0
+	if now - last_hint_time > 6.0:
+		last_hint_time = now
+		toast("पहले सभी योद्धाओं को हराओ, तब योद्धा-राज प्रकट होगा")
 
 func open_portal() -> void:
 	portal_open = true
@@ -809,5 +1062,7 @@ func finish_level() -> void:
 	player.set_physics_process(false)
 	if tandav_player.playing:
 		create_tween().tween_property(tandav_player, "volume_db", -40.0, 3.0)
+	stop_tension()
+	save_game()
 	if magical_node and magical_node.has_method("trigger_hatim_scroll"):
 		magical_node.trigger_hatim_scroll("द्वार पार हो गया, मुसाफिर... सातों पहेलियों का सफ़र अभी बाकी है। अगला लेवल जल्द ही आ रहा है।", "")

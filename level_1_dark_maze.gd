@@ -24,6 +24,7 @@ void fragment() {
 @export var charge_time: float = 1.0       # rune par kitni der kiran tikani hai
 
 class Rune:
+	var id: int = 0
 	var node: MeshInstance3D
 	var mat: StandardMaterial3D
 	var normal: Vector3
@@ -46,6 +47,8 @@ var runes_complete: bool = false   # teeno runes mil gaye
 var door_opened: bool = false      # player darwaze ke paas gaya, darwaza khul gaya
 var door_center: Vector3 = Vector3.ZERO
 var level_complete: bool = false
+var intro_shown: bool = false
+var skip_intro: bool = false
 
 func _ready() -> void:
 	magical_elements_node = get_node_or_null("../MagicalElements")
@@ -57,11 +60,18 @@ func _ready() -> void:
 	create_exit_trigger()
 
 	await get_tree().create_timer(2.0).timeout
+	if skip_intro:
+		return
+	intro_shown = true
 	show_scroll("सुनो ऐ मुसाफिर! इस अंधेरी भूलभुलैया में दीवारों पर 3 हिडन चमकते संकेत (रून्स) छिपे हैं। अपनी सर्चलाइट की किरणें रून्स पर फोकस करो, तभी भूलभुलैया का दरवाज़ा खुलेगा, वरना ये गूंजती दीवारें तुम्हें कभी बाहर नहीं जाने देंगी!", "res://audio/intro")
 
 func show_scroll(text: String, voice_path: String = "") -> void:
 	if magical_elements_node and magical_elements_node.has_method("trigger_hatim_scroll"):
 		magical_elements_node.trigger_hatim_scroll(text, voice_path)
+
+func save_game() -> void:
+	if game_manager_node and game_manager_node.has_method("save_now"):
+		game_manager_node.save_now()
 
 func play_file(base: String) -> bool:
 	if game_manager_node and game_manager_node.has_method("play_file"):
@@ -294,6 +304,7 @@ func spawn_hidden_runes() -> void:
 		r.node = mesh
 		r.mat = mat
 		r.normal = normal
+		r.id = runes.size()
 		runes.append(r)
 
 func _physics_process(delta: float) -> void:
@@ -349,6 +360,7 @@ func on_rune_activated(r: Rune) -> void:
 	active_runes_found += 1
 	print("Rune Found! Total: ", active_runes_found, "/", total_runes_required)
 	sfx("rune")
+	save_game()
 
 	if active_runes_found >= total_runes_required:
 		unlock_maze_exit()
@@ -385,6 +397,7 @@ func check_door_proximity() -> void:
 
 func open_exit_door() -> void:
 	door_opened = true
+	save_game()
 	print("Darwaza khul raha hai...")
 
 	# Darwaza utni der me khulega jitni lambi tumhari sound file hai (2 se 6 second)
@@ -429,6 +442,7 @@ func _on_exit_entered(body: Node3D) -> void:
 	if body.name != "Player" or not door_opened or level_complete:
 		return
 	level_complete = true
+	save_game()
 	print("LEVEL 1 COMPLETE")
 
 	# Card nahi, sirf awaaz: tumhari welcome voice (audio/welcome_shadow_world)
@@ -445,18 +459,78 @@ func _on_exit_entered(body: Node3D) -> void:
 	start_magical_world()
 	start_level_two(welcome_len)
 
-# Level 2 ka maidan banao; welcome awaaz khatam hone ke baad uske instructions ka card aata hai
-func start_level_two(wait: float) -> void:
+func create_level_two() -> Node3D:
 	var script := load("res://level_2_field.gd") as Script
 	if script == null:
-		return
+		return null
 	if door_light:
 		door_light.visible = false # roshni ki ginti kam rakhne ke liye
-
 	var l2 := Node3D.new()
 	l2.name = "Level2Field"
 	l2.set_script(script)
 	get_parent().add_child(l2)
+	return l2
+
+# ---------------- Save / Resume ----------------
+func get_save_data() -> Dictionary:
+	var remaining: Array = []
+	for r in runes:
+		remaining.append(r.id)
+	var found: Array = []
+	for i in range(total_runes_required):
+		if not remaining.has(i):
+			found.append(i)
+	return {
+		"intro_shown": intro_shown,
+		"found_runes": found,
+		"runes_complete": runes_complete,
+		"door_opened": door_opened,
+		"level_complete": level_complete
+	}
+
+func apply_save_data(d: Dictionary, l2_data: Dictionary) -> void:
+	intro_shown = bool(d.get("intro_shown", false))
+	skip_intro = intro_shown
+	for id in d.get("found_runes", []):
+		for r in runes.duplicate():
+			if r.id == int(id):
+				runes.erase(r)
+				r.node.queue_free()
+				active_runes_found += 1
+	if bool(d.get("runes_complete", false)):
+		runes_complete = true
+		if door_mat:
+			door_mat.emission = Color(1.0, 0.8, 0.3)
+		if door_light:
+			door_light.light_color = Color(1.0, 0.8, 0.3)
+	if bool(d.get("door_opened", false)):
+		open_door_instant()
+	if bool(d.get("level_complete", false)):
+		level_complete = true
+		start_magical_world()
+		var l2: Node3D = create_level_two()
+		if l2:
+			l2.activate()
+			l2.apply_save_data(l2_data)
+
+func open_door_instant() -> void:
+	door_opened = true
+	if door_anim and door_anim_name != "":
+		door_anim.play(door_anim_name)
+		var anim: Animation = door_anim.get_animation(door_anim_name)
+		if anim:
+			door_anim.seek(anim.length, true)
+		release_door_collision()
+	elif is_instance_valid(door_pivot):
+		door_pivot.rotation_degrees.y = 100.0
+	if door_light:
+		door_light.light_energy = 0.4
+
+# Level 2 ka maidan banao; welcome awaaz khatam hone ke baad uske instructions ka card aata hai
+func start_level_two(wait: float) -> void:
+	var l2: Node3D = create_level_two()
+	if l2 == null:
+		return
 
 	await get_tree().create_timer(wait + 0.8).timeout
 	show_scroll("मुसाफिर, यह परछाइयों का मैदान है... पराग ज्योतिषपुर का रास्ता यहीं से गुज़रता है। मैदान के चारों कोनों पर पत्थर की मशालें खड़ी हैं। अपनी सर्चलाइट की किरण टिकाकर उन्हें जगाओ। अँधेरे से परछाइयाँ तुम्हारी ओर बढ़ेंगी... उन पर रोशनी डालो, वे राख हो जाएँगी। जब चारों मशालें जल उठेंगी, तब महादेव का द्वार प्रकट होगा।", "res://audio/level2_intro")

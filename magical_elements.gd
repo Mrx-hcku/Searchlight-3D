@@ -76,17 +76,27 @@ func setup_magical_scroll_ui() -> void:
 	var font := SystemFont.new()
 	font.font_names = PackedStringArray(["Noto Sans Devanagari", "Noto Sans", "sans-serif"])
 
+	# Landscape me card chauda aur kam unchai ka (screen 1080 unchi hai)
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var landscape: bool = vp.x > vp.y
+	var card_w: float = 1300.0 if landscape else 900.0
+	var card_h: float = 520.0 if landscape else 720.0
+	var side_m: int = 130 if landscape else 110
+	var top_m: int = 95 if landscape else 115
+	var body_size: int = 32 if landscape else 36
+	var title_size: int = 46 if landscape else 54
+
 	# Card: andar ka hissa (margin) text ke liye, border aur rods paint_card() banata hai
 	card = MarginContainer.new()
 	card.set_anchors_preset(Control.PRESET_CENTER)
 	card.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	card.grow_vertical = Control.GROW_DIRECTION_BOTH
-	card.custom_minimum_size = Vector2(900, 720)
+	card.custom_minimum_size = Vector2(card_w, card_h)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	card.add_theme_constant_override("margin_left", 110)
-	card.add_theme_constant_override("margin_right", 110)
-	card.add_theme_constant_override("margin_top", 115)
-	card.add_theme_constant_override("margin_bottom", 115)
+	card.add_theme_constant_override("margin_left", side_m)
+	card.add_theme_constant_override("margin_right", side_m)
+	card.add_theme_constant_override("margin_top", top_m)
+	card.add_theme_constant_override("margin_bottom", top_m)
 	card.draw.connect(paint_card)
 	card.resized.connect(on_card_resized)
 	scroll_ui.add_child(card)
@@ -98,7 +108,7 @@ func setup_magical_scroll_ui() -> void:
 	var subtitle := make_label("— हातिम की पहेली —", font, 26, Color(GOLD.r, GOLD.g, GOLD.b, 0.8))
 	box.add_child(subtitle)
 
-	var title := make_label("शाही आमंत्रण", font, 54, GOLD)
+	var title := make_label("शाही आमंत्रण", font, title_size, GOLD)
 	box.add_child(title)
 
 	var divider := Control.new()
@@ -107,12 +117,12 @@ func setup_magical_scroll_ui() -> void:
 	divider.draw.connect(paint_divider.bind(divider))
 	box.add_child(divider)
 
-	body_label = make_label("", font, 36, GOLD_SOFT)
+	body_label = make_label("", font, body_size, GOLD_SOFT)
 	body_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	body_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body_label.custom_minimum_size = Vector2(680, 200)
+	body_label.custom_minimum_size = Vector2(card_w - float(side_m) * 2.0, 160)
 	body_label.add_theme_constant_override("line_spacing", 12)
 	box.add_child(body_label)
 

@@ -16,7 +16,8 @@ const LOOK_Y_SCALE: float = 0.75   # upar-neeche thoda dheema, taaki camera bhat
 const LOOK_PITCH_LIMIT: float = 75.0
 const SWORD_RANGE: float = 3.0      # talwar kitni door tak lagti hai (meter)
 const SWORD_COOLDOWN: float = 0.6
-const FOV_BASE: float = 88.0         # portrait screen par chauda nazaara
+const PLAYER_SWORD_INDEX: int = 0     # swords.glb me kaun si talwar (0..3), pasand na aaye to badlo
+const FOV_BASE: float = 72.0         # landscape ke liye (chauda nazaara apne aap bante hai)
 const SPRINT_MULT: float = 1.6
 const FOV_SPRINT: float = 8.0
 
@@ -30,6 +31,7 @@ var look_touch_index: int = -1
 var look_start_pos: Vector2 = Vector2.ZERO
 var look_started: bool = false
 var look_pending: Vector2 = Vector2.ZERO
+var look_sens_eff: float = 0.0055
 var move_touch_index: int = -1
 var move_joystick_center: Vector2 = Vector2.ZERO
 var joy_default_center: Vector2 = Vector2.ZERO
@@ -58,12 +60,14 @@ var combat_enabled: bool = false   # Level 2 me chalu hoti hai
 var health: float = 100.0
 var dead: bool = false
 var attack_cooldown: float = 0.0
+var swing_active: bool = false     # talwar ghoom rahi hai (takrav ke liye)
 var joy_base: Panel
 var joy_knob: Panel
 
 func _ready() -> void:
 	touch_screen_size = get_viewport().get_visible_rect().size
-	joy_default_center = Vector2(240, touch_screen_size.y - 430)
+	look_sens_eff = look_sensitivity * 1080.0 / maxf(touch_screen_size.x, 1.0)
+	joy_default_center = Vector2(260.0, touch_screen_size.y - 250.0)
 	move_joystick_center = joy_default_center
 	game_manager = get_node_or_null("../GameManager")
 	add_to_group("player")
@@ -128,7 +132,7 @@ func setup_touch_ui() -> void:
 	torch_btn = Button.new()
 	torch_btn.custom_minimum_size = Vector2(120, 120)
 	torch_btn.size = Vector2(120, 120)
-	torch_btn.position = Vector2(w - 170, h - 400)
+	torch_btn.position = Vector2(w - 180, h - 520)
 	torch_btn.focus_mode = Control.FOCUS_NONE
 	torch_btn.add_theme_font_size_override("font_size", 22)
 	torch_btn.pressed.connect(toggle_torch)
@@ -150,7 +154,7 @@ func setup_touch_ui() -> void:
 	attack_btn = Button.new()
 	attack_btn.custom_minimum_size = Vector2(150, 150)
 	attack_btn.size = Vector2(150, 150)
-	attack_btn.position = Vector2(w - 260, h - 600)
+	attack_btn.position = Vector2(w - 300, h - 330)
 	attack_btn.focus_mode = Control.FOCUS_NONE
 	attack_btn.text = "ATTACK"
 	attack_btn.add_theme_font_size_override("font_size", 22)
@@ -169,7 +173,7 @@ func setup_touch_ui() -> void:
 	sprint_btn = Button.new()
 	sprint_btn.custom_minimum_size = Vector2(120, 120)
 	sprint_btn.size = Vector2(120, 120)
-	sprint_btn.position = Vector2(60, h - 680)
+	sprint_btn.position = Vector2(70, h - 560)
 	sprint_btn.focus_mode = Control.FOCUS_NONE
 	sprint_btn.add_theme_font_size_override("font_size", 24)
 	sprint_btn.button_down.connect(toggle_sprint)
@@ -183,7 +187,7 @@ func setup_touch_ui() -> void:
 	health_bar.value = 100.0
 	health_bar.show_percentage = false
 	health_bar.size = Vector2(360, 22)
-	health_bar.position = Vector2(40, 70)
+	health_bar.position = Vector2(40, 40)
 	var hb_bg := StyleBoxFlat.new()
 	hb_bg.bg_color = Color(0, 0, 0, 0.5)
 	hb_bg.set_corner_radius_all(11)
@@ -263,8 +267,8 @@ func _process(delta: float) -> void:
 		var k: float = 1.0 - exp(-delta / LOOK_SMOOTH)
 		var step: Vector2 = look_pending * k
 		look_pending -= step
-		rotate_y(-step.x * look_sensitivity)
-		camera.rotate_x(-step.y * look_sensitivity * LOOK_Y_SCALE)
+		rotate_y(-step.x * look_sens_eff)
+		camera.rotate_x(-step.y * look_sens_eff * LOOK_Y_SCALE)
 		camera.rotation.x = clampf(camera.rotation.x, deg_to_rad(-LOOK_PITCH_LIMIT), deg_to_rad(LOOK_PITCH_LIMIT))
 
 	var active: bool = move_touch_index != -1
@@ -426,7 +430,14 @@ func build_fp_sword() -> void:
 	sword_pivot.visible = false
 	camera.add_child(sword_pivot)
 
-	# Pack ki asli talwar (Katana > Sword > ShortSword), na mile to code wali
+	# Pehle swords.glb ki chuni hui talwar
+	if game_manager and game_manager.has_method("make_pack_weapon"):
+		var pack_sword: Node3D = game_manager.make_pack_weapon(PLAYER_SWORD_INDEX, 1.0)
+		if pack_sword:
+			sword_pivot.add_child(pack_sword)
+			return
+
+	# Phir Quaternius (Katana > Sword > ShortSword), na mile to code wali
 	if game_manager and game_manager.has_method("make_weapon"):
 		var file_sword: Node3D = game_manager.make_weapon(["Katana", "Sword", "ShortSword"], 0.95)
 		if file_sword:
@@ -469,10 +480,13 @@ func attack() -> void:
 	if not combat_enabled or dead or attack_cooldown > 0.0:
 		return
 	attack_cooldown = SWORD_COOLDOWN
+	swing_active = true
 	swing_sword()
 	play_any("res://audio/sword_swing", "slash", -2.0)
 	await get_tree().create_timer(0.14).timeout
 	apply_sword_hits()
+	await get_tree().create_timer(0.22).timeout
+	swing_active = false
 
 func apply_sword_hits() -> void:
 	var fwd: Vector3 = -global_transform.basis.z
@@ -486,10 +500,42 @@ func apply_sword_hits() -> void:
 		d.y = 0.0
 		var dist: float = d.length()
 		if dist > 0.01 and dist <= SWORD_RANGE and fwd.dot(d / dist) > 0.35:
-			e.take_hit(1, global_position)
-			hit_any = true
+			var res: int = e.take_hit(1, global_position)
+			if res == 0:
+				hit_any = true
 	if hit_any:
 		play_any("res://audio/sword_hit", "hit")
+
+func is_swinging() -> bool:
+	return swing_active
+
+# Takrav ya dhaal se tumhe peeche dhakelna
+func nudge(dir: Vector3, strength: float = 4.0) -> void:
+	velocity += dir * strength
+
+# ---------------- Save / Resume ----------------
+func get_save_data() -> Dictionary:
+	return {
+		"pos": [global_position.x, global_position.y, global_position.z],
+		"yaw": rotation.y,
+		"pitch": camera.rotation.x,
+		"health": health,
+		"torch": is_torch_on
+	}
+
+func apply_save_data(d: Dictionary) -> void:
+	var pos: Array = d.get("pos", [])
+	if pos.size() == 3:
+		global_position = Vector3(float(pos[0]), float(pos[1]) + 0.3, float(pos[2]))
+	rotation.y = float(d.get("yaw", 0.0))
+	camera.rotation.x = float(d.get("pitch", 0.0))
+	health = clampf(float(d.get("health", 100.0)), 1.0, 100.0)
+	health_bar.value = health
+	is_torch_on = bool(d.get("torch", true))
+	spot_light.visible = is_torch_on
+	update_torch_button()
+	velocity = Vector3.ZERO
+	dead = false
 
 func take_damage(amount: float, from_pos: Vector3) -> void:
 	if dead or not combat_enabled:
