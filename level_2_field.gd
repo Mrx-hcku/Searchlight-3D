@@ -845,7 +845,7 @@ func spawn_boss_wave(silent: bool = false) -> void:
 		boss_state = 2
 		return
 	boss_state = 1
-	var spawn: Vector3 = STATUE_POS + Vector3(-7.0, 0.0, 0.0)
+	var spawn: Vector3 = STATUE_POS + Vector3(-5.0, 0.0, 0.0)   # boss murti ke paas, peeche
 
 	boss_node = make_warrior(warrior_script, "boss", spawn, BOSS_SWORD_INDEX)
 	boss_node.connect("died", Callable(self, "_on_boss_died"))
@@ -854,8 +854,8 @@ func spawn_boss_wave(silent: bool = false) -> void:
 
 	guards.clear()
 	guards_alive = 0
-	for z in [-5.0, 5.0]:
-		var g: CharacterBody3D = make_warrior(warrior_script, "guard", spawn + Vector3(-2.0, 0.0, z), 0)
+	for z in [-4.5, 4.5]:
+		var g: CharacterBody3D = make_warrior(warrior_script, "guard", spawn + Vector3(-8.0, 0.0, z), 0)
 		g.connect("died", Callable(self, "_on_guard_died"))
 		guards.append(g)
 		guards_alive += 1

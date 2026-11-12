@@ -81,6 +81,27 @@ func load_audio(base: String) -> AudioStream:
 	return null
 
 # User ki apni sound file bajao. File mili to true, nahi to false.
+# Koi bhi stream pool ke khaali player me bajao
+func play_stream(stream: AudioStream, volume_db: float = 0.0) -> void:
+	for p in sfx_players:
+		if not p.playing:
+			p.stream = stream
+			p.volume_db = volume_db
+			p.play()
+			return
+
+# base, base_1, base_2 ... base_5 me se jitni files hain unme se EK RANDOM bajao (na mile to code wali awaaz)
+func play_variant(base: String, fallback: String, volume_db: float = 0.0) -> void:
+	var cands: Array = []
+	for suffix in ["", "_1", "_2", "_3", "_4", "_5"]:
+		var st: AudioStream = load_audio(base + suffix)
+		if st:
+			cands.append(st)
+	if cands.is_empty():
+		play_sfx(fallback, volume_db)
+		return
+	play_stream(cands[randi() % cands.size()], volume_db)
+
 # Pehle tumhari file (base naam), na mile to code wali awaaz fallback se
 func play_any(base: String, fallback: String, volume_db: float = 0.0) -> void:
 	if not play_file(base, volume_db):
@@ -279,7 +300,7 @@ func make_weapon(names: Array, length: float, parent_scale: float = 1.0) -> Node
 	fit_weapon(wrapper, length, parent_scale)
 	return wrapper
 
-func fit_weapon(wrapper: Node3D, length: float, parent_scale: float) -> void:
+func fit_weapon(wrapper: Node3D, length: float, parent_scale: float, flip: bool = false) -> void:
 	var size: Vector3 = aabb_of(wrapper).size
 	var longest: float = maxf(size.x, maxf(size.y, size.z))
 	if longest <= 0.0001:
@@ -292,7 +313,10 @@ func fit_weapon(wrapper: Node3D, length: float, parent_scale: float) -> void:
 		rot = Basis(Vector3(1, 0, 0), -PI / 2.0)
 	wrapper.basis = rot
 	# Mooth neeche rahe: jis chhor par cross-section badi ho wo mooth hai
-	if hilt_on_top(wrapper):
+	var hilt_top: bool = hilt_on_top(wrapper)
+	if flip:
+		hilt_top = not hilt_top   # haath se ulti dikhe to constant FLIP badlo
+	if hilt_top:
 		wrapper.basis = Basis(Vector3(1, 0, 0), PI) * rot
 	var s: float = length / longest / maxf(parent_scale, 0.0001)
 	wrapper.basis = wrapper.basis.scaled(Vector3.ONE * s)
@@ -319,15 +343,23 @@ func hilt_on_top(wrapper: Node3D) -> bool:
 	var h: float = max_y - min_y
 	if h <= 0.0001:
 		return false
-	var w_low: float = 0.0
-	var w_high: float = 0.0
+	# 12 patti (bin) me chaudai napo: sabse chaudi jagah (guard/mooth) jis chhor ke paas ho wahi mooth hai
+	var bins: Array = []
+	for b in range(12):
+		bins.append(0.0)
 	for v in verts:
-		var cross: float = maxf(absf(v.x - cx), absf(v.z - cz))
-		if v.y < min_y + 0.2 * h:
-			w_low = maxf(w_low, cross)
-		elif v.y > max_y - 0.2 * h:
-			w_high = maxf(w_high, cross)
-	return w_high > w_low * 1.15
+		var idx: int = clampi(int((v.y - min_y) / h * 12.0), 0, 11)
+		bins[idx] = maxf(float(bins[idx]), maxf(absf(v.x - cx), absf(v.z - cz)))
+	var widest: int = 0
+	for b in range(12):
+		if float(bins[b]) > float(bins[widest]):
+			widest = b
+	if widest <= 4:
+		return false      # mooth neeche
+	if widest >= 7:
+		return true       # mooth upar
+	# Beech me ho to chhoron ki motaai se
+	return float(bins[11]) + float(bins[10]) > float(bins[0]) + float(bins[1])
 
 func gather_verts(node: Node, xform: Transform3D, out: PackedVector3Array) -> void:
 	for c in node.get_children():
@@ -395,7 +427,7 @@ func shield_hit(dur: float) -> PackedFloat32Array:
 # ---------------- Sword pack (swords.glb) se ek talwar ----------------
 # Pack me 4 talwarein ek hi file me hoti hain: unke tukde (meshes) position ke hisaab se 4 jhund me baant kar
 # index wali talwar banai jati hai (phal +Y par, mooth origin par, lambai = length meter)
-func make_pack_weapon(index: int, length: float, parent_scale: float = 1.0) -> Node3D:
+func make_pack_weapon(index: int, length: float, parent_scale: float = 1.0, flip: bool = false) -> Node3D:
 	var path: String = find_model_path(["swords", "sword_pack", "neptunia"])
 	if path == "":
 		return null
@@ -422,7 +454,7 @@ func make_pack_weapon(index: int, length: float, parent_scale: float = 1.0) -> N
 				ni.set_surface_override_material(s, m)
 		wrapper.add_child(ni)
 	inst.free()
-	fit_weapon(wrapper, length, parent_scale)
+	fit_weapon(wrapper, length, parent_scale, flip)
 	return wrapper
 
 func collect_meshes(node: Node, xform: Transform3D, out: Array) -> void:

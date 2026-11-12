@@ -16,6 +16,9 @@ const LOOK_Y_SCALE: float = 0.75   # upar-neeche thoda dheema, taaki camera bhat
 const LOOK_PITCH_LIMIT: float = 75.0
 const SWORD_RANGE: float = 3.0      # talwar kitni door tak lagti hai (meter)
 const SWORD_COOLDOWN: float = 0.6
+const MAX_HEALTH: float = 150.0      # tumhari energy (pehle 100 thi)
+# Talwar ulti dikhe (mooth upar, phal neeche) to true kar do
+const PLAYER_SWORD_FLIP: bool = false
 const PLAYER_SWORD_INDEX: int = 0     # swords.glb me kaun si talwar (0..3), pasand na aaye to badlo
 const FOV_BASE: float = 72.0         # landscape ke liye (chauda nazaara apne aap bante hai)
 const SPRINT_MULT: float = 1.6
@@ -57,7 +60,7 @@ var sword_tween: Tween
 
 # Ladai
 var combat_enabled: bool = false   # Level 2 me chalu hoti hai
-var health: float = 100.0
+var health: float = MAX_HEALTH
 var dead: bool = false
 var attack_cooldown: float = 0.0
 var swing_active: bool = false     # talwar ghoom rahi hai (takrav ke liye)
@@ -183,8 +186,8 @@ func setup_touch_ui() -> void:
 	# Health bar (upar bayein)
 	health_bar = ProgressBar.new()
 	health_bar.min_value = 0.0
-	health_bar.max_value = 100.0
-	health_bar.value = 100.0
+	health_bar.max_value = MAX_HEALTH
+	health_bar.value = MAX_HEALTH
 	health_bar.show_percentage = false
 	health_bar.size = Vector2(360, 22)
 	health_bar.position = Vector2(40, 40)
@@ -416,7 +419,7 @@ func set_combat_enabled(on: bool) -> void:
 	combat_enabled = on
 	attack_btn.visible = on
 	health_bar.visible = on
-	sword_pivot.visible = on
+	sword_pivot.visible = false   # talwar sirf vaar karte waqt dikhti hai
 
 func play_any(base: String, fallback: String, volume_db: float = 0.0) -> void:
 	if game_manager and game_manager.has_method("play_any"):
@@ -432,7 +435,7 @@ func build_fp_sword() -> void:
 
 	# Pehle swords.glb ki chuni hui talwar
 	if game_manager and game_manager.has_method("make_pack_weapon"):
-		var pack_sword: Node3D = game_manager.make_pack_weapon(PLAYER_SWORD_INDEX, 1.0)
+		var pack_sword: Node3D = game_manager.make_pack_weapon(PLAYER_SWORD_INDEX, 0.85, 1.0, PLAYER_SWORD_FLIP)
 		if pack_sword:
 			sword_pivot.add_child(pack_sword)
 			return
@@ -481,12 +484,16 @@ func attack() -> void:
 		return
 	attack_cooldown = SWORD_COOLDOWN
 	swing_active = true
+	sword_pivot.visible = true
 	swing_sword()
 	play_any("res://audio/sword_swing", "slash", -2.0)
 	await get_tree().create_timer(0.14).timeout
 	apply_sword_hits()
 	await get_tree().create_timer(0.22).timeout
 	swing_active = false
+	await get_tree().create_timer(0.25).timeout
+	if not swing_active and attack_cooldown <= 0.2:
+		sword_pivot.visible = false
 
 func apply_sword_hits() -> void:
 	var fwd: Vector3 = -global_transform.basis.z
@@ -505,6 +512,32 @@ func apply_sword_hits() -> void:
 				hit_any = true
 	if hit_any:
 		play_any("res://audio/sword_hit", "hit")
+
+# Takrav dikhao: talwar beech me aakar dushman ki talwar se takrati hai, camera hilta hai
+func clash_visual() -> void:
+	if sword_tween:
+		sword_tween.kill()
+	sword_pivot.visible = true
+	sword_tween = create_tween()
+	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-70, 10, 20), 0.05)
+	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.0, -0.2, -0.75), 0.05)
+	sword_tween.tween_property(sword_pivot, "position", Vector3(0.03, -0.22, -0.72), 0.04)
+	sword_tween.tween_property(sword_pivot, "rotation_degrees", Vector3(-30, 8, -18), 0.25)
+	sword_tween.parallel().tween_property(sword_pivot, "position", Vector3(0.22, -0.34, -0.6), 0.25)
+	shake_camera(0.05, 0.22)
+	await get_tree().create_timer(0.55).timeout
+	if not swing_active and attack_cooldown <= 0.3:
+		sword_pivot.visible = false
+
+func shake_camera(strength: float, duration: float) -> void:
+	var t := create_tween()
+	var steps: int = 5
+	for i in range(steps):
+		var s: float = strength * (1.0 - float(i) / float(steps))
+		t.tween_property(camera, "h_offset", randf_range(-s, s), duration / steps)
+		t.parallel().tween_property(camera, "v_offset", randf_range(-s, s), duration / steps)
+	t.tween_property(camera, "h_offset", 0.0, 0.03)
+	t.parallel().tween_property(camera, "v_offset", 0.0, 0.03)
 
 func is_swinging() -> bool:
 	return swing_active
@@ -529,7 +562,7 @@ func apply_save_data(d: Dictionary) -> void:
 		global_position = Vector3(float(pos[0]), float(pos[1]) + 0.3, float(pos[2]))
 	rotation.y = float(d.get("yaw", 0.0))
 	camera.rotation.x = float(d.get("pitch", 0.0))
-	health = clampf(float(d.get("health", 100.0)), 1.0, 100.0)
+	health = clampf(float(d.get("health", MAX_HEALTH)), 1.0, MAX_HEALTH)
 	health_bar.value = health
 	is_torch_on = bool(d.get("torch", true))
 	spot_light.visible = is_torch_on
@@ -554,8 +587,8 @@ func take_damage(amount: float, from_pos: Vector3) -> void:
 
 func respawn_at(pos: Vector3) -> void:
 	dead = false
-	health = 100.0
-	health_bar.value = 100.0
+	health = MAX_HEALTH
+	health_bar.value = MAX_HEALTH
 	global_position = pos
 	velocity = Vector3.ZERO
 
